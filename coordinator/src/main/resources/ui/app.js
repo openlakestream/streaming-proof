@@ -603,7 +603,8 @@ function renderConfigSummary(proof, clusterTargets) {
   }
 
   const p = {
-    partitions: proof.partitions ?? "?",
+    partitions: proof.partitions ?? proof.pulsar?.initialSegments ?? "?",
+    partitionsLabel: proof.pulsar?.scalableTopicEnabled ? "segments" : "partitions",
     producers:  proof.producers ?? "?",
     consumers:  proof.consumers ?? "?",
     rate:       proof.msgRate ?? "?",
@@ -640,7 +641,7 @@ function renderConfigSummary(proof, clusterTargets) {
         <span class="cfg-compact-value cfg-compact-value-topology">
           <span><span class="cfg-compact-em">${escapeHtml(String(p.producers))}</span> producers</span>
           <span class="cfg-compact-dot"></span>
-          <span><span class="cfg-compact-em">${escapeHtml(String(p.partitions))}</span> partitions</span>
+          <span><span class="cfg-compact-em">${escapeHtml(String(p.partitions))}</span> ${p.partitionsLabel}</span>
           <span class="cfg-compact-dot"></span>
           <span><span class="cfg-compact-em">${escapeHtml(String(p.consumers))}</span> consumers</span>
         </span>

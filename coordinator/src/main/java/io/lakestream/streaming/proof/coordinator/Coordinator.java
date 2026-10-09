@@ -20,6 +20,7 @@ import io.lakestream.streaming.proof.common.records.Configs;
 import io.lakestream.streaming.proof.common.records.Proof;
 import io.lakestream.streaming.proof.common.records.ProofDetails;
 import io.lakestream.streaming.proof.common.records.ProofReport;
+import io.lakestream.streaming.proof.common.records.PulsarProofConfig;
 import io.lakestream.streaming.proof.worker.DriverCache;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeParseException;
@@ -154,12 +155,38 @@ public class Coordinator {
             throw new IllegalArgumentException("Message size must be at least " + ProofValue.MIN_SIZE
                     + " bytes to hold the sequence number, got " + proof.getMessageSize() + ".");
         }
+        validateScalableTopicSettings(proof);
         String proofID = RandomStringUtils.secure().nextAlphanumeric(5);
         proof.setId(proofID);
         ProofTask task = new ProofTask(proof, configs, driverCache.getDriver(driverName,
                 configs.drivers().get(driverName)));
         proofs.put(proof.getId(), task);
         task.start();
+    }
+
+    /** Scalable topics take initial segments and a consumer type instead of partitions and a subscription type. */
+    private static void validateScalableTopicSettings(Proof proof) {
+        PulsarProofConfig pulsar = proof.getPulsar();
+        if (!proof.isScalableTopic()) {
+            if (pulsar != null && (pulsar.getInitialSegments() != null || pulsar.getConsumerType() != null)) {
+                throw new IllegalArgumentException(
+                        "pulsar.initialSegments and pulsar.consumerType require pulsar.scalableTopicEnabled.");
+            }
+            return;
+        }
+        if (proof.getPartitions() != null) {
+            throw new IllegalArgumentException(
+                    "Scalable topics have no partitions, use pulsar.initialSegments instead.");
+        }
+        if (pulsar.getConsumerConfig() != null) {
+            throw new IllegalArgumentException(
+                    "Scalable topics have no subscription types, use pulsar.consumerType (stream, queue or "
+                            + "checkpoint) instead of pulsar.consumerConfig.");
+        }
+        if (pulsar.getConsumerType() != null
+                && !List.of("stream", "queue", "checkpoint").contains(pulsar.getConsumerType())) {
+            throw new IllegalArgumentException("pulsar.consumerType must be stream, queue or checkpoint.");
+        }
     }
 
     /**

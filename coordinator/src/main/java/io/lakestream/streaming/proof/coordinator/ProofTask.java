@@ -219,7 +219,8 @@ public class ProofTask {
         this.topicDriverResolver = topicDriverResolver;
         this.webhookService = new WebhookNotificationService();
         this.sharedMode = proof.getPulsar() != null
-                && proof.getPulsar().isSharedSubscription();
+                && proof.getPulsar().isSharedMode();
+        applyTopicDefaults();
         configs.workers().forEach((k, v) -> {
             WorkerHttpClient client = new WorkerHttpClient(Dsl.asyncHttpClient(), v);
             clients.add(client);
@@ -294,7 +295,31 @@ public class ProofTask {
         Map<String, String> topicConfig = proof.getKafka() != null
                 ? proof.getKafka().getTopicConfig() : null;
         runTopicOperation(driverNames, driver ->
-                driver.createTopic(topicName, proof.getPartitions(), topicConfig));
+                driver.createTopic(topicName, topicPartitions(), topicConfig));
+    }
+
+    /**
+     * Fills in the topic settings the proof leaves unset. A Pulsar scalable topic is also given its
+     * topic:// name, which is what makes the Pulsar driver use a scalable topic.
+     */
+    private void applyTopicDefaults() {
+        if (!proof.isScalableTopic()) {
+            if (proof.getPartitions() == null) {
+                proof.setPartitions(Proof.DEFAULT_PARTITIONS);
+            }
+            return;
+        }
+        if (!proof.getTopic().contains("://")) {
+            proof.setTopic("topic://public/default/" + proof.getTopic());
+        }
+        if (proof.getPulsar().getInitialSegments() == null) {
+            proof.getPulsar().setInitialSegments(Proof.DEFAULT_PARTITIONS);
+        }
+    }
+
+    /** Partitions of a classic topic, or initial segments of a Pulsar scalable topic */
+    private int topicPartitions() {
+        return proof.isScalableTopic() ? proof.getPulsar().getInitialSegments() : proof.getPartitions();
     }
 
     private void deleteTopicOnDrivers(String topicName, List<String> driverNames) {
@@ -439,18 +464,20 @@ public class ProofTask {
         String driverName = proof.getDrivers() == null ? proof.getDriver() : proof.getDrivers().consumer();
         Map<String, Object> pulsarConsumerConfig = proof.getPulsar() != null
                 ? proof.getPulsar().getConsumerConfig() : null;
+        String pulsarConsumerType = proof.getPulsar() != null ? proof.getPulsar().getConsumerType() : null;
         for (int i = 0; i < clients.size(); i++) {
             int consumerCount = baseConsumersPerWorker + (i == workerCount - 1 ? consumerRemainder : 0);
             NewConsumers record = new NewConsumers(
                     proof.getId(),
                     proof.getTopic(),
-                    proof.getPartitions(),
+                    topicPartitions(),
                     consumerCount,
                     TimeUnit.SECONDS.toMillis(proof.getConsumeDelay()),
                     proof.getMessageSize(),
                     driverName,
                     configs.drivers().get(driverName),
-                    pulsarConsumerConfig
+                    pulsarConsumerConfig,
+                    pulsarConsumerType
             );
             try {
                 clients.get(i).startConsumers(record).join();

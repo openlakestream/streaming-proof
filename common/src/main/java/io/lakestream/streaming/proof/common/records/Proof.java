@@ -13,6 +13,7 @@
  */
 package io.lakestream.streaming.proof.common.records;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import io.lakestream.streaming.proof.common.ProofValue;
 import io.lakestream.streaming.proof.common.WebhookConfig;
@@ -58,6 +59,9 @@ import lombok.Data;
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class Proof {
 
+    /** Partitions of the topic, or initial segments of a Pulsar scalable topic, when not set */
+    public static final int DEFAULT_PARTITIONS = 10;
+
     /** Unique identifier for the proof test */
     private String id;
 
@@ -89,11 +93,11 @@ public class Proof {
     private String topic;
 
     /**
-     * Number of partitions for the topic.
+     * Number of partitions for the topic, {@value #DEFAULT_PARTITIONS} when not set.
      * Higher partition count enables greater parallelism but may affect ordering guarantees.
+     * Not allowed for Pulsar scalable topics, which use {@link PulsarProofConfig#getInitialSegments()}.
      */
-    @Builder.Default
-    private int partitions = 10;
+    private Integer partitions;
 
     /**
      * Number of producer instances to create.
@@ -193,4 +197,10 @@ public class Proof {
 
     /** Per-proof Kafka-specific configuration */
     private KafkaProofConfig kafka;
+
+    /** Whether the proof runs on a Pulsar 5 scalable topic instead of a classic topic */
+    @JsonIgnore
+    public boolean isScalableTopic() {
+        return pulsar != null && pulsar.isScalableTopicEnabled();
+    }
 }

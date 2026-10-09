@@ -43,6 +43,9 @@ import java.util.Map;
  * @param consumeDelayMs The delay in milliseconds between message published and consumed
  * @param driver The messaging system driver configuration that specifies how to
  *              create and configure the consumer instances
+ * @param pulsarConsumerConfig The Pulsar consumer configuration for classic topics, or null
+ * @param pulsarConsumerType The Pulsar consumer type for scalable topics ("stream", "queue" or "checkpoint"),
+ *                           or null
  *
  * @see Driver
  * @see ProofConsumer
@@ -55,5 +58,6 @@ public record NewConsumers(String id,
                            int messageSize,
                            String driverName,
                            Driver driver,
-                           Map<String, Object> pulsarConsumerConfig) {
+                           Map<String, Object> pulsarConsumerConfig,
+                           String pulsarConsumerType) {
 }

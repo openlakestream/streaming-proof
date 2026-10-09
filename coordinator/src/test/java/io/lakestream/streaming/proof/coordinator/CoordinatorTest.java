@@ -22,6 +22,7 @@ import io.lakestream.streaming.proof.common.records.Configs;
 import io.lakestream.streaming.proof.common.records.Driver;
 import io.lakestream.streaming.proof.common.records.Proof;
 import io.lakestream.streaming.proof.common.records.ProofReport;
+import io.lakestream.streaming.proof.common.records.PulsarProofConfig;
 import java.util.List;
 import java.util.Map;
 import org.testng.annotations.Test;
@@ -76,6 +77,48 @@ public class CoordinatorTest {
                 () -> coordinator.createProof(proof));
 
         assertEquals(error.getMessage(), "Final wait seconds must be 0 or greater.");
+    }
+
+    @Test
+    public void testCreateProofValidatesScalableTopicSettings() {
+        Coordinator coordinator = new Coordinator();
+        coordinator.updateConfigs(new Configs(
+                Map.of(),
+                Map.of("pulsar", new Driver("pulsar", Map.of(), null))));
+
+        assertCreateProofRejected(coordinator, pulsarProof(PulsarProofConfig.builder()
+                        .scalableTopicEnabled(true)
+                        .build()).partitions(4).build(),
+                "Scalable topics have no partitions, use pulsar.initialSegments instead.");
+        assertCreateProofRejected(coordinator, pulsarProof(PulsarProofConfig.builder()
+                        .scalableTopicEnabled(true)
+                        .consumerConfig(Map.of("subscriptionType", "Shared"))
+                        .build()).build(),
+                "Scalable topics have no subscription types, use pulsar.consumerType (stream, queue or "
+                        + "checkpoint) instead of pulsar.consumerConfig.");
+        assertCreateProofRejected(coordinator, pulsarProof(PulsarProofConfig.builder()
+                        .scalableTopicEnabled(true)
+                        .consumerType("Queue")
+                        .build()).build(),
+                "pulsar.consumerType must be stream, queue or checkpoint.");
+        assertCreateProofRejected(coordinator, pulsarProof(PulsarProofConfig.builder()
+                        .consumerType("queue")
+                        .build()).build(),
+                "pulsar.initialSegments and pulsar.consumerType require pulsar.scalableTopicEnabled.");
+    }
+
+    private static Proof.ProofBuilder pulsarProof(PulsarProofConfig pulsar) {
+        return Proof.builder()
+                .name("scalable")
+                .driver("pulsar")
+                .features(List.of("at_least_once"))
+                .topic("test-topic")
+                .pulsar(pulsar);
+    }
+
+    private static void assertCreateProofRejected(Coordinator coordinator, Proof proof, String message) {
+        assertEquals(expectThrows(IllegalArgumentException.class, () -> coordinator.createProof(proof))
+                .getMessage(), message);
     }
 
     private static void addProof(Coordinator coordinator, String id, String startTime) {

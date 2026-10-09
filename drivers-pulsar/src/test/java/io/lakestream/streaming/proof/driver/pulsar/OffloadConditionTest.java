@@ -28,7 +28,6 @@ import java.util.concurrent.TimeUnit;
 import org.apache.pulsar.client.admin.PulsarAdmin;
 import org.apache.pulsar.client.admin.Topics;
 import org.apache.pulsar.client.api.MessageIdAdv;
-import org.apache.pulsar.common.naming.TopicName;
 import org.apache.pulsar.common.partition.PartitionedTopicMetadata;
 import org.apache.pulsar.common.policies.data.ManagedLedgerInternalStats;
 import org.apache.pulsar.common.policies.data.PersistentTopicInternalStats;
@@ -39,7 +38,7 @@ public class OffloadConditionTest {
     @Test
     public void shouldEnterDegradedModeWhenStatsRefreshNeverSucceeds() {
         TestTopicsState state = new TestTopicsState(1);
-        String partition0 = TopicName.get("wPG0v").getPartition(0).toString();
+        String partition0 = OffloadCondition.partitionName("wPG0v", 0);
         state.failTopics.add(partition0);
 
         OffloadCondition condition = new OffloadCondition(
@@ -61,7 +60,7 @@ public class OffloadConditionTest {
     @Test
     public void shouldNotWaitAgainForSameLedgerAfterEnteringDegradedMode() {
         TestTopicsState state = new TestTopicsState(1);
-        String partition0 = TopicName.get("wPG0v").getPartition(0).toString();
+        String partition0 = OffloadCondition.partitionName("wPG0v", 0);
         state.failTopics.add(partition0);
 
         OffloadCondition condition = new OffloadCondition(
@@ -86,8 +85,8 @@ public class OffloadConditionTest {
     @Test
     public void shouldContinueWhenOnePartitionFailsAndTargetLedgerIsOffloaded() {
         TestTopicsState state = new TestTopicsState(2);
-        String partition0 = TopicName.get("wPG0v").getPartition(0).toString();
-        String partition1 = TopicName.get("wPG0v").getPartition(1).toString();
+        String partition0 = OffloadCondition.partitionName("wPG0v", 0);
+        String partition1 = OffloadCondition.partitionName("wPG0v", 1);
         state.statsByTopic.put(partition0, offloadedLedgerStats(123L));
         state.failTopics.add(partition1);
 
@@ -111,7 +110,7 @@ public class OffloadConditionTest {
     @Test
     public void shouldSkipPerLedgerWaitWhenOnlyCatchupConditionIsEnabled() {
         TestTopicsState state = new TestTopicsState(1);
-        String partition0 = TopicName.get("wPG0v").getPartition(0).toString();
+        String partition0 = OffloadCondition.partitionName("wPG0v", 0);
         state.statsByTopic.put(partition0, offloadedLedgerStats(123L));
 
         OffloadCondition condition = OffloadCondition.getOffloadCondition(
@@ -128,7 +127,7 @@ public class OffloadConditionTest {
     @Test
     public void shouldCacheOffloadedLedgersAndRequireNewLedgersForCatchupRead() {
         TestTopicsState state = new TestTopicsState(1);
-        String partition0 = TopicName.get("wPG0v").getPartition(0).toString();
+        String partition0 = OffloadCondition.partitionName("wPG0v", 0);
         state.statsByTopic.put(partition0, offloadedLedgerStats(123L, 124L));
 
         OffloadCondition condition = new OffloadCondition(
@@ -161,7 +160,7 @@ public class OffloadConditionTest {
     @Test(timeOut = 10000)
     public void shouldStopWaitingWhenInterruptedEvenIfDegradedModeIsDisabled() throws Exception {
         TestTopicsState state = new TestTopicsState(1);
-        String partition0 = TopicName.get("wPG0v").getPartition(0).toString();
+        String partition0 = OffloadCondition.partitionName("wPG0v", 0);
         state.statsByTopic.put(partition0, offloadedLedgerStats());
 
         OffloadCondition condition = new OffloadCondition(

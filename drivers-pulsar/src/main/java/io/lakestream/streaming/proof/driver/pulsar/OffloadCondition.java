@@ -27,7 +27,6 @@ import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.pulsar.client.admin.PulsarAdmin;
 import org.apache.pulsar.client.api.MessageIdAdv;
-import org.apache.pulsar.common.naming.TopicName;
 import org.apache.pulsar.common.partition.PartitionedTopicMetadata;
 import org.apache.pulsar.common.policies.data.PersistentTopicInternalStats;
 
@@ -228,8 +227,7 @@ public class OffloadCondition {
                 PartitionedTopicMetadata topicMetadata = admin.topics().getPartitionedTopicMetadata(topic);
                 if (topicMetadata.partitions > 0) {
                     for (int i = 0; i < topicMetadata.partitions; i++) {
-                        String partitionedTopic = TopicName.get(topic).getPartition(i).toString();
-                        topicInternalStatsCache.put(partitionedTopic, null);
+                        topicInternalStatsCache.put(partitionName(topic, i), null);
                     }
                 } else {
                     topicInternalStatsCache.put(topic, null);
@@ -255,6 +253,11 @@ public class OffloadCondition {
             }
         }
         return new RefreshResult(successCount, failureCount, failedTopics);
+    }
+
+    /** Pulsar's partition naming; TopicName is relocated inside the shaded client jar. */
+    static String partitionName(String topic, int partition) {
+        return topic + "-partition-" + partition;
     }
 
     private static long getLongConfig(Map<String, Object> configs, String key, long defaultValue) {

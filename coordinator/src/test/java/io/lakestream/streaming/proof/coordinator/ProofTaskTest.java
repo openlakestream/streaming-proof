@@ -24,6 +24,7 @@ import static org.mockito.Mockito.verify;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNotNull;
+import static org.testng.Assert.assertNull;
 import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.fail;
 
@@ -104,6 +105,25 @@ public class ProofTaskTest {
 
             verify(driver, times(1)).createTopic("kafka-topic", 5, topicConfig);
             verify(driver, times(1)).createTopic("kafka-topic_transactional", 5, topicConfig);
+        } finally {
+            task.getExecutor().shutdownNow();
+        }
+    }
+
+    @Test
+    public void testCreateProofTopicsCreatesScalableTopicWithInitialSegments() {
+        ProofDriver driver = mock(ProofDriver.class);
+        Proof proof = Proof.builder()
+                .topic("scalable-topic")
+                .features(List.of("at_least_once", "ordering"))
+                .pulsar(PulsarProofConfig.builder().scalableTopicEnabled(true).initialSegments(4).build())
+                .build();
+        ProofTask task = new ProofTask(proof, new Configs(Map.of(), Map.of()), driver);
+        try {
+            task.createProofTopics();
+
+            verify(driver, times(1)).createTopic("topic://public/default/scalable-topic", 4, null);
+            assertNull(proof.getPartitions());
         } finally {
             task.getExecutor().shutdownNow();
         }

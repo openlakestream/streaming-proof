@@ -33,7 +33,6 @@ import org.apache.pulsar.client.api.ConsumerBuilder;
 import org.apache.pulsar.client.api.Message;
 import org.apache.pulsar.client.api.MessageIdAdv;
 import org.apache.pulsar.client.api.PulsarClient;
-import org.apache.pulsar.common.naming.TopicName;
 import org.apache.pulsar.common.partition.PartitionedTopicMetadata;
 import org.apache.pulsar.common.policies.data.PersistentTopicInternalStats;
 import org.testng.annotations.DataProvider;
@@ -60,7 +59,7 @@ public class PulsarAtLeastOnceProofConsumerTest {
     public void shouldStopWithoutProcessingMessageWhenOffloadWaitIsInterrupted(
             Map<String, Object> configs) throws Exception {
         String topic = "wPG0v";
-        String partition0 = TopicName.get(topic).getPartition(0).toString();
+        String partition0 = OffloadCondition.partitionName(topic, 0);
         PulsarClient client = mock(PulsarClient.class);
         ConsumerBuilder<ProofValue> builder = mock(ConsumerBuilder.class, RETURNS_SELF);
         Consumer<ProofValue> pulsarConsumer = mock(Consumer.class);

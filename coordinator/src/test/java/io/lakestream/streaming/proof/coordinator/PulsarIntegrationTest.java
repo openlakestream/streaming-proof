@@ -54,7 +54,7 @@ public class PulsarIntegrationTest {
         int port = getFreePort();
         workerPort = getFreePort();
 
-        pulsarContainer = new PulsarContainer(DockerImageName.parse("apachepulsar/pulsar:4.0.4"));
+        pulsarContainer = new PulsarContainer(DockerImageName.parse("apachepulsar/pulsar:5.0.0"));
         pulsarContainer.start();
 
         server = new CoordinatorStarter();
@@ -212,6 +212,67 @@ public class PulsarIntegrationTest {
                         .build())
                 .build();
         runWatermarkTrimmingTest(proof);
+    }
+
+    @Test
+    public void testScalableTopicStreamConsumer() throws Exception {
+        // More consumers than segments, so one segment is shared by entry bucket
+        Proof proof = Proof.builder()
+                .name(UUID.randomUUID().toString())
+                .driver("pulsar_driver")
+                .keys(50)
+                .producers(2)
+                .consumers(3)
+                .features(List.of("at_least_once", "ordering"))
+                .checkPointInterval(5)
+                .msgRate(500)
+                .timeout(180)
+                .pulsar(PulsarProofConfig.builder().scalableTopicEnabled(true).initialSegments(2).build())
+                .build();
+        runProofAndVerify(proof);
+    }
+
+    @Test
+    public void testScalableTopicQueueConsumer() throws Exception {
+        Proof proof = Proof.builder()
+                .name(UUID.randomUUID().toString())
+                .driver("pulsar_driver")
+                .keys(10)
+                .producers(2)
+                .consumers(4)
+                .features(List.of("at_least_once"))
+                .checkPointInterval(5)
+                .msgRate(500)
+                .timeout(180)
+                .pulsar(PulsarProofConfig.builder()
+                        .scalableTopicEnabled(true)
+                        .initialSegments(2)
+                        .consumerType("queue")
+                        .build())
+                .build();
+        runProofAndVerify(proof);
+    }
+
+    @Test
+    public void testScalableTopicCheckpointConsumer() throws Exception {
+        // One consumer per segment: Pulsar 5.0.0 checkpoint consumers sharing a segment both read all of it
+        Proof proof = Proof.builder()
+                .name(UUID.randomUUID().toString())
+                .driver("pulsar_driver")
+                .keys(50)
+                .producers(2)
+                .consumers(2)
+                .features(List.of("at_least_once", "ordering"))
+                .checkPointInterval(5)
+                .msgRate(500)
+                .timeout(180)
+                .pulsar(PulsarProofConfig.builder()
+                        .scalableTopicEnabled(true)
+                        .initialSegments(2)
+                        .consumerType("checkpoint")
+                        .build())
+                .build();
+        runProofAndVerify(proof);
     }
 
     private void runWatermarkTrimmingTest(Proof proof) throws Exception {

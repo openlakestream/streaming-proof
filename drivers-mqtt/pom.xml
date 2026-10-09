@@ -43,11 +43,7 @@
         </dependency>
         <dependency>
             <groupId>org.apache.pulsar</groupId>
-            <artifactId>pulsar-client</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.pulsar</groupId>
-            <artifactId>pulsar-client-admin</artifactId>
+            <artifactId>pulsar-client-v5-shaded</artifactId>
         </dependency>
         <dependency>
             <groupId>org.testng</groupId>

@@ -23,9 +23,10 @@ import lombok.NoArgsConstructor;
 /**
  * Per-proof Pulsar-specific configuration.
  *
- * <p>Holds optional consumer configuration that is passed through to
- * Pulsar's {@code ConsumerBuilder.loadConf()} at consumer creation time.
- * Any key accepted by Pulsar's {@code ConsumerConfigurationData} can be used.
+ * <p>Classic topics take an optional consumer configuration that is passed through to
+ * Pulsar's {@code ConsumerBuilder.loadConf()} at consumer creation time. Pulsar 5 scalable
+ * topics have no partitions or subscription types and take initial segments and a consumer
+ * type instead.
  */
 @Data
 @Builder
@@ -34,25 +35,41 @@ import lombok.NoArgsConstructor;
 public class PulsarProofConfig {
 
     /**
-     * Consumer configuration map passed to {@code ConsumerBuilder.loadConf()}.
+     * Consumer configuration map passed to {@code ConsumerBuilder.loadConf()} for classic topics.
      * Keys must match Pulsar's ConsumerConfigurationData field names (case-sensitive).
      * Example keys: "subscriptionType" ("Exclusive", "Failover", "Shared", "Key_Shared"),
      * "receiverQueueSize", "ackTimeoutMillis".
      */
     private Map<String, Object> consumerConfig;
 
-    /**
-     * Returns whether this configuration specifies a Shared subscription type.
-     */
-    @JsonIgnore
-    public boolean isSharedSubscription() {
-        return isSharedSubscriptionType(consumerConfig);
-    }
+    /** Whether the proof runs on a Pulsar 5 scalable topic ({@code topic://}) instead of a classic topic. */
+    private boolean scalableTopicEnabled;
 
     /**
-     * Returns whether the given consumer config map specifies a Shared subscription type.
+     * Number of initial segments of the scalable topic, {@value Proof#DEFAULT_PARTITIONS} when not set.
+     * Replaces the proof's partitions, which scalable topics do not have.
      */
-    public static boolean isSharedSubscriptionType(Map<String, Object> config) {
-        return config != null && "Shared".equals(config.get("subscriptionType"));
+    private Integer initialSegments;
+
+    /**
+     * Consumer type for Pulsar 5 scalable topics: "stream" (the default) consumes in per-key
+     * order, "queue" consumes without ordering and is verified like a Shared subscription, and
+     * "checkpoint" reads in per-key order with no broker-managed position.
+     */
+    private String consumerType;
+
+    /**
+     * Returns whether consumers receive messages without per-key ordering: a Shared subscription,
+     * or queue consumers on a scalable topic.
+     */
+    @JsonIgnore
+    public boolean isSharedMode() {
+        return isSharedMode(consumerConfig, consumerType);
+    }
+
+    /** Same as {@link #isSharedMode()}, for callers that only have the two settings. */
+    public static boolean isSharedMode(Map<String, Object> consumerConfig, String consumerType) {
+        return "queue".equals(consumerType)
+                || consumerConfig != null && "Shared".equals(consumerConfig.get("subscriptionType"));
     }
 }

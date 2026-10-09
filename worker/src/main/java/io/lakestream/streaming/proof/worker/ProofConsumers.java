@@ -80,8 +80,11 @@ public class ProofConsumers {
         if (newConsumers.pulsarConsumerConfig() != null) {
             configs.put("pulsar.consumer.config", newConsumers.pulsarConsumerConfig());
         }
-        boolean sharedMode = newConsumers.pulsarConsumerConfig() != null
-                && PulsarProofConfig.isSharedSubscriptionType(newConsumers.pulsarConsumerConfig());
+        if (newConsumers.pulsarConsumerType() != null) {
+            configs.put("pulsar.consumer.type", newConsumers.pulsarConsumerType());
+        }
+        boolean sharedMode = PulsarProofConfig.isSharedMode(
+                newConsumers.pulsarConsumerConfig(), newConsumers.pulsarConsumerType());
         for (int i = 0; i < newConsumers.consumers(); i++) {
             ProofConsumerTask task = new ProofConsumerTask(sharedMode, newConsumers.messageSize());
             ProofConsumer proofConsumer = driver.createConsumer(newConsumers.topic(), newConsumers.partitions(),

@@ -14,8 +14,10 @@
 package io.lakestream.streaming.proof.common.records;
 
 import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertNull;
+import static org.testng.Assert.assertTrue;
 
 import io.lakestream.streaming.proof.common.ProofValue;
 import io.lakestream.streaming.proof.common.Util;
@@ -84,7 +86,7 @@ public class PulsarProofConfigTest {
         NewConsumers consumers = new NewConsumers(
                 "proof-1", "topic-1", 4, 2, 0L, ProofValue.MIN_SIZE, "pulsar",
                 new Driver("pulsar", Map.of("pulsar.service.url", "pulsar://localhost:6650")),
-                pulsarConfig);
+                pulsarConfig, null);
 
         String json = Util.JSON_MAPPER.writeValueAsString(consumers);
         NewConsumers deserialized = Util.JSON_MAPPER.readValue(json, NewConsumers.class);
@@ -98,12 +100,57 @@ public class PulsarProofConfigTest {
         NewConsumers consumers = new NewConsumers(
                 "proof-1", "topic-1", 4, 2, 0L, ProofValue.MIN_SIZE, "pulsar",
                 new Driver("pulsar", Map.of("pulsar.service.url", "pulsar://localhost:6650")),
-                null);
+                null, null);
 
         String json = Util.JSON_MAPPER.writeValueAsString(consumers);
         NewConsumers deserialized = Util.JSON_MAPPER.readValue(json, NewConsumers.class);
 
         assertNull(deserialized.pulsarConsumerConfig());
+        assertNull(deserialized.pulsarConsumerType());
+    }
+
+    @Test
+    public void testProofWithScalableTopic() throws Exception {
+        String json = """
+                {
+                  "name": "test",
+                  "topic": "t",
+                  "features": ["at_least_once"],
+                  "pulsar": {
+                    "scalableTopicEnabled": true,
+                    "initialSegments": 4,
+                    "consumerType": "queue"
+                  }
+                }
+                """;
+        Proof proof = Util.JSON_MAPPER.readValue(json, Proof.class);
+        assertTrue(proof.isScalableTopic());
+        assertNull(proof.getPartitions());
+        assertEquals(proof.getPulsar().getInitialSegments(), Integer.valueOf(4));
+        assertEquals(proof.getPulsar().getConsumerType(), "queue");
+    }
+
+    @Test
+    public void testSharedMode() {
+        assertTrue(PulsarProofConfig.builder().consumerType("queue").build().isSharedMode());
+        assertTrue(PulsarProofConfig.builder()
+                .consumerConfig(Map.of("subscriptionType", "Shared")).build().isSharedMode());
+        assertFalse(PulsarProofConfig.builder().consumerType("stream").build().isSharedMode());
+        assertFalse(PulsarProofConfig.builder().consumerType("checkpoint").build().isSharedMode());
+        assertFalse(new PulsarProofConfig().isSharedMode());
+    }
+
+    @Test
+    public void testNewConsumersSerializationWithConsumerType() throws Exception {
+        NewConsumers consumers = new NewConsumers(
+                "proof-1", "topic-1", 4, 2, 0L, ProofValue.MIN_SIZE, "pulsar",
+                new Driver("pulsar", Map.of("pulsar.service.url", "pulsar://localhost:6650")),
+                null, "queue");
+
+        String json = Util.JSON_MAPPER.writeValueAsString(consumers);
+        NewConsumers deserialized = Util.JSON_MAPPER.readValue(json, NewConsumers.class);
+
+        assertEquals(deserialized.pulsarConsumerType(), "queue");
     }
 
     @Test

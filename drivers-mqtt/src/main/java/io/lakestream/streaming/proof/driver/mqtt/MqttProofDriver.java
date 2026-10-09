@@ -13,7 +13,7 @@
  */
 package io.lakestream.streaming.proof.driver.mqtt;
 
-import static com.google.common.base.Preconditions.checkArgument;
+import static org.apache.commons.lang3.Validate.isTrue;
 
 import com.hivemq.client.mqtt.mqtt5.Mqtt5BlockingClient;
 import com.hivemq.client.mqtt.mqtt5.Mqtt5Client;
@@ -67,9 +67,9 @@ public class MqttProofDriver implements ProofDriver {
             String adminUrl = (String) configs.getOrDefault(PULSAR_ADMIN_URL, "http://localhost:8080");
             String authToken = (String) configs.get(PULSAR_CLIENT_AUTH_TOKEN);
 
-            checkArgument(StringUtils.isNotBlank(serviceUrl), "Missing '" + MQTT_SERVICE_URL + "' parameter");
-            checkArgument(StringUtils.isNotBlank(adminUrl), "Missing '" + PULSAR_ADMIN_URL + "' parameter");
-            checkArgument(StringUtils.isNotBlank(authToken), "Missing '" + PULSAR_CLIENT_AUTH_TOKEN + "' parameter");
+            isTrue(StringUtils.isNotBlank(serviceUrl), "Missing '" + MQTT_SERVICE_URL + "' parameter");
+            isTrue(StringUtils.isNotBlank(adminUrl), "Missing '" + PULSAR_ADMIN_URL + "' parameter");
+            isTrue(StringUtils.isNotBlank(authToken), "Missing '" + PULSAR_CLIENT_AUTH_TOKEN + "' parameter");
 
             if (serviceUrl.contains("://")) {
                 serviceUrl = serviceUrl.split("://")[1];

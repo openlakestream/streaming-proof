@@ -79,7 +79,7 @@ The check is **opt-in**: `maxStallSeconds` defaults to `0`, which disables it en
 
 **Supported Streaming Systems**:
 - Apache Kafka, or any Kafka API compatible systems
-- Apache Pulsar (Failover, Key_Shared, Shared subscriptions)
+- Apache Pulsar (Failover, Key_Shared, Shared subscriptions, and Pulsar 5.0 scalable topics)
 
 **Supported verifications**:
 - At least once
@@ -238,6 +238,44 @@ curl -X POST http://localhost:8080/proofs \
 ```
 
 With Shared subscriptions, messages are round-robin distributed across consumers — per-key ordering is not guaranteed. The framework uses **high-watermark-based verification** instead of last-sequence comparison: it computes the highest contiguous sequence per key across all consumers, and verifies that every produced message has been consumed. Out-of-order delivery is expected and not flagged.
+
+### Pulsar Scalable Topics
+
+To verify [scalable topics](https://github.com/apache/pulsar/tree/master/spec/scalable-topics) on an Apache Pulsar
+5.0+ cluster, enable them in the proof's `pulsar` section. Any Pulsar driver works:
+
+```bash
+curl -X POST http://localhost:8080/proofs \
+  -H "Content-Type: application/json" \
+  -d '{
+  "name": "Pulsar scalable topic",
+  "driver": "pulsar_driver",
+  "features": ["at_least_once", "ordering"],
+  "producers": 2,
+  "consumers": 4,
+  "msgRate": 1000,
+  "keys": 100,
+  "pulsar": {
+    "scalableTopicEnabled": true,
+    "initialSegments": 4,
+    "consumerType": "stream"
+  }
+}'
+```
+
+The proof creates `topic://public/default/<topic>` and produces and consumes with the Pulsar V5 client. Scalable
+topics have no partitions or subscription types, so `partitions` and `pulsar.consumerConfig` are rejected:
+
+- `initialSegments` replaces `partitions`, 10 when not set.
+- `consumerType` picks one of the Pulsar 5 consumers:
+  - `stream` (default): per-key ordered consumption, verified with `at_least_once` and `ordering` across segment
+    splits and merges.
+  - `queue`: unordered consumption, verified like Shared subscriptions.
+  - `checkpoint`: per-key ordered reads with no broker-managed position or acknowledgment, verified like `stream`.
+    The consumers form a group that shares the segments, and each segment is read from its first message.
+
+The `offload.condition.*` settings apply to classic topics only. The broker splits and merges segments on its own
+unless auto scaling is disabled for the namespace or topic.
 
 5. Stop all the components:
 

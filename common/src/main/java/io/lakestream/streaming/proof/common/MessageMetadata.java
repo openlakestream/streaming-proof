@@ -50,6 +50,10 @@ import com.fasterxml.jackson.core.JsonProcessingException;
  *                       this is for Kafka exactly-once verification.
  * @param publishTimestampMillis The publish timestamp reported by the messaging system,
  *                               when available. This is used for end-to-end latency.
+ * @param batchIndex The index of the message within its Pulsar batch, or null when unbatched.
+ * @param segmentId The Pulsar scalable-topic segment holding the message, or null for other
+ *                  topics. A key only ever moves to segments with higher ids, so positions
+ *                  in different segments are ordered by segment id first.
  *
  * @see ProofProducer#sendAsync(String, long)
  * @see MessageListener#onMessage(String, long, MessageMetadata)
@@ -75,8 +79,17 @@ public record MessageMetadata(
         Long publishTimestampMillis,
 
         @JsonInclude(Include.NON_NULL)
-        Integer batchIndex
+        Integer batchIndex,
+
+        @JsonInclude(Include.NON_NULL)
+        Long segmentId
 ) {
+
+    public MessageMetadata(
+            Long offset, Long ledgerId, Long entryId, Integer partition,
+            Long originalOffset, Long publishTimestampMillis, Integer batchIndex) {
+        this(offset, ledgerId, entryId, partition, originalOffset, publishTimestampMillis, batchIndex, null);
+    }
 
     public MessageMetadata(Long offset, Long ledgerId, Long entryId, Integer partition, Long originalOffset) {
         this(offset, ledgerId, entryId, partition, originalOffset, -1L, null);
@@ -129,6 +142,10 @@ public record MessageMetadata(
         // If both have ledger and entry IDs, compare them
         if (this.ledgerId != null && this.entryId != null
                 && other.ledgerId != null && other.entryId != null) {
+            // Scalable topics: a key only ever moves on to segments with higher ids
+            if (this.segmentId != null && other.segmentId != null && !this.segmentId.equals(other.segmentId)) {
+                return this.segmentId > other.segmentId;
+            }
             if (!this.ledgerId.equals(other.ledgerId)) {
                 return this.ledgerId > other.ledgerId;
             }

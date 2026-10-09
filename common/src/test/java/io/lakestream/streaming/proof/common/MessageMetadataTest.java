@@ -220,4 +220,26 @@ public class MessageMetadataTest {
         // batchIndex is null, should not appear in JSON
         assertFalse(json.contains("batchIndex"));
     }
+
+    @Test
+    public void testIsAfterComparesSegmentIdFirst() {
+        // A key moves to a successor segment whose ledger id may be lower than the sealed parent's
+        MessageMetadata parent = new MessageMetadata(null, 20L, 5L, null, -1L, -1L, 0, 0L);
+        MessageMetadata child = new MessageMetadata(null, 10L, 0L, null, -1L, -1L, -1, 2L);
+        assertTrue(child.isAfter(parent));
+        assertFalse(parent.isAfter(child));
+
+        // Same segment falls back to ledger / entry / batch order
+        assertTrue(new MessageMetadata(null, 10L, 1L, null, -1L, -1L, -1, 2L).isAfter(child));
+        assertFalse(child.isAfter(new MessageMetadata(null, 10L, 0L, null, -1L, -1L, -1, 2L)));
+    }
+
+    @Test
+    public void testSegmentIdSerialization() throws JsonProcessingException {
+        MessageMetadata metadata = new MessageMetadata(null, 10L, 0L, null, -1L, -1L, -1, 2L);
+        assertEquals(Util.JSON_MAPPER.readValue(metadata.toString(), MessageMetadata.class), metadata);
+
+        // segmentId is null for other topics, should not appear in JSON
+        assertFalse(new MessageMetadata(10L, 100L).toString().contains("segmentId"));
+    }
 }
