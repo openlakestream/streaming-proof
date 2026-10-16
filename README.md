@@ -106,8 +106,12 @@ mvn clean install -DskipTests -Pdocker
 ```
 ## Release
 
-Automated Docker image publishing is not currently configured. Build the image locally with the
-Docker Maven profile shown above.
+Pushing a tag `vX.Y.Z` triggers the workflow [Publish image to Docker hub](https://github.com/openlakestream/streaming-proof/actions/workflows/publish.yaml), which publishes `lakestream/streaming-proof:X.Y.Z`. Final releases also update `lakestream/streaming-proof:latest`; pre-release tags such as `v1.0.0-rc1` do not.
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
 
 ## Quick Start with Docker Compose
 

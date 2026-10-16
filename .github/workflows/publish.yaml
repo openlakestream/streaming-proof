@@ -1,0 +1,50 @@
+# Pushing a tag `vX.Y.Z` publishes lakestream/streaming-proof:X.Y.Z to Docker Hub.
+# The image is also pushed as `latest` unless the version carries a pre-release
+# suffix such as `-rc1`, so `latest` always points at the most recent final release.
+# Requires the DOCKER_USER and DOCKER_PASSWORD organization secrets.
+name: Publish image to Docker hub
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  publish:
+    if: github.repository == 'openlakestream/streaming-proof'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          username: ${{ secrets.DOCKER_USER }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: License Check
+        run: mvn license:check
+
+      - name: Run Build
+        run: mvn clean install -DskipTests -Pdocker
+
+      - name: Push image
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          # The docker Maven profile builds lakestream/streaming-proof:latest
+          IMAGE=lakestream/streaming-proof
+          VERSION="${VERSION#v}"
+          docker tag "${IMAGE}:latest" "${IMAGE}:${VERSION}"
+          docker push "${IMAGE}:${VERSION}"
+          # Pre-release versions (e.g. 1.0.0-rc1) must not move `latest`.
+          if [[ "${VERSION}" != *-* ]]; then
+            docker push "${IMAGE}:latest"
+          fi
