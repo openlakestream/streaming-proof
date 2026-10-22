@@ -183,23 +183,30 @@ public class ConsumerCheckPoint {
      * @param consumedRange Map of sequence ranges to add for the key
      */
     public void addKey(String key, Map<String, SeqRange> consumedRange) {
-        consumed.compute(key, (k, v) -> {
-            if (v == null) {
-                v = new TreeMap<>();
-            }
-            v.putAll(consumedRange);
-            return v;
-        });
+        SortedMap<String, SeqRange> ranges = consumed.computeIfAbsent(key, k -> new TreeMap<>());
+        consumedRange.forEach((timestamp, range) -> putRange(ranges, timestamp, range));
     }
 
     public void addWriteDupsOrOutOrder(String key, Map<String, SeqRange> consumedRange) {
-        writeDupsOrOutOrder.compute(key, (k, v) -> {
-            if (v == null) {
-                v = new TreeMap<>();
-            }
-            v.putAll(consumedRange);
-            return v;
-        });
+        SortedMap<String, SeqRange> ranges = writeDupsOrOutOrder.computeIfAbsent(key, k -> new TreeMap<>());
+        consumedRange.forEach((timestamp, range) -> putRange(ranges, timestamp, range));
+    }
+
+    /**
+     * Puts a range under the time it was created without replacing another range created at the same
+     * time: the consumers of a Shared subscription often create ranges of one key within one clock tick.
+     * Putting the same range again leaves a single copy.
+     *
+     * @param ranges The ranges of a key, by creation time
+     * @param timestamp The creation time of the range
+     * @param range The range to put
+     */
+    public static void putRange(SortedMap<String, SeqRange> ranges, String timestamp, SeqRange range) {
+        // "'" sorts right after the timestamp and before any later one
+        while (ranges.containsKey(timestamp) && !ranges.get(timestamp).equals(range)) {
+            timestamp += "'";
+        }
+        ranges.put(timestamp, range);
     }
 
     /**

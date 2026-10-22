@@ -52,6 +52,22 @@ public class ConsumerCheckPointTest {
     }
 
     @Test
+    public void testMergeKeepsRangesCreatedAtTheSameTime() {
+        // Two Shared consumers created a range of the same key within one clock tick
+        String timestamp = "2026-10-21T21:59:47.090196";
+        checkPoint.addKey(TEST_KEY_1, createRangeMap(timestamp, 0L, 5L));
+        ConsumerCheckPoint otherCheckPoint = new ConsumerCheckPoint();
+        otherCheckPoint.addKey(TEST_KEY_1, createRangeMap(timestamp, 6L, 10L));
+        checkPoint.addKey(TEST_KEY_1, createRangeMap("2026-10-21T21:59:47.090197", 11L, 12L));
+
+        checkPoint.merge(otherCheckPoint);
+
+        assertEquals(checkPoint.getConsumed().get(TEST_KEY_1).size(), 3);
+        assertEquals(checkPoint.computeHighWatermarks().get(TEST_KEY_1).longValue(), 12L);
+        assertEquals(checkPoint.getConsumed().get(TEST_KEY_1).lastKey(), "2026-10-21T21:59:47.090197");
+    }
+
+    @Test
     public void testMerge() {
         // Create first checkpoint with a range
         checkPoint.addKey(TEST_KEY_1, createRangeMap("1", 1L, 5L));

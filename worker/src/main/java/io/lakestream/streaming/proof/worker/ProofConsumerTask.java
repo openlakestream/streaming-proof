@@ -288,7 +288,7 @@ public class ProofConsumerTask implements MessageListener, AutoCloseable {
             // Format the current timestamp as a readable date/time string
             String timestamp = java.time.format.DateTimeFormatter.ISO_LOCAL_DATE_TIME
                     .format(java.time.LocalDateTime.now());
-            v.put(timestamp, range);
+            ConsumerCheckPoint.putRange(v, timestamp, range);
             return v;
         });
     }
@@ -315,7 +315,7 @@ public class ProofConsumerTask implements MessageListener, AutoCloseable {
             // Format the current timestamp as a readable date/time string
             String timestamp = java.time.format.DateTimeFormatter.ISO_LOCAL_DATE_TIME
                    .format(java.time.LocalDateTime.now());
-            v.put(timestamp, range);
+            ConsumerCheckPoint.putRange(v, timestamp, range);
             return v;
         });
     }
