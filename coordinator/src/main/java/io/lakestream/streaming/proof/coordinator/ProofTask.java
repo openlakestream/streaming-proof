@@ -647,8 +647,8 @@ public class ProofTask {
             checkPointInCheckTimeStamps = System.currentTimeMillis();
         } else if (Duration.ofMillis(System.currentTimeMillis() - checkPointInCheckTimeStamps)
                 .compareTo(Duration.ofSeconds(proof.getTimeout())) > 0) {
-            log.error("[{}] shared checkpoint verify failed: {}", proof.getId(), getSummary());
             failed = true;
+            log.error("[{}] shared checkpoint verify failed: {}", proof.getId(), getSummary());
             lastFailedProducerCheckpoint = inCheck;
             lastFailedConsumerCheckpoint = latestConsumerCheckpoint;
             timeouts++;
@@ -757,6 +757,7 @@ public class ProofTask {
                 return;
             }
         }
+        failed = true;
         log.warn("[{}] Final verification: consumers did not catch up within {} seconds",
                 proof.getId(), maxRetries);
     }
@@ -846,11 +847,7 @@ public class ProofTask {
                     verified,
                     countProducerErrors(this.getLastVerifiedProducerCheckpoint()),
                     0, // out-of-order: not applicable for Shared
-                    cp.getMissedSeqs().values().stream()
-                            .flatMap(ranges -> ranges.stream()
-                                    .map(range -> range.getEnd().seq() - range.getStart().seq() - 1))
-                            .mapToInt(Long::intValue)
-                            .sum(),
+                    countSharedMissed(),
                     cp.getDuplicatedCount().values().stream().reduce(0L, Long::sum),
                     0, // write duplicates: not tracked in shared mode
                     this.getTimeouts(),
@@ -882,6 +879,21 @@ public class ProofTask {
                 this.getTimeouts(),
                 computeVerifiedStallSeconds(),
                 computeMaxVerifiedStallSeconds());
+    }
+
+    /**
+     * Shared consumers receive a key's messages in any order, so a gap is normally a message still on its
+     * way to another consumer. A message only counts as missed once the in-check checkpoint covering it
+     * failed verification and it is still not consumed.
+     */
+    private int countSharedMissed() {
+        if (!failed) {
+            return 0;
+        }
+        return (int) inCheck.getPublished().entrySet().stream()
+                .mapToLong(entry -> latestConsumerCheckpoint.countUnconsumed(entry.getKey(),
+                        highWatermarks.getOrDefault(entry.getKey(), -1L), entry.getValue().seq()))
+                .sum();
     }
 
     /**

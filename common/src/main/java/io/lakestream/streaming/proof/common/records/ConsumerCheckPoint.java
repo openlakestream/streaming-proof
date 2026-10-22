@@ -428,6 +428,26 @@ public class ConsumerCheckPoint {
     }
 
     /**
+     * Counts the sequences of a key in (from, to] that no consumed range covers.
+     *
+     * @param key The message key
+     * @param from Exclusive lower bound, such as the key's high watermark
+     * @param to Inclusive upper bound, such as the key's last published sequence
+     * @return The number of sequences within the bounds that were not consumed
+     */
+    public long countUnconsumed(String key, long from, long to) {
+        long unconsumed = Math.max(0, to - from);
+        SortedMap<String, SeqRange> ranges = consumed.get(key);
+        if (ranges != null) {
+            for (SeqRange range : trim(ranges.values().stream().toList())) {
+                unconsumed -= Math.max(0, Math.min(range.getEnd().seq(), to)
+                        - Math.max(range.getStart().seq(), from + 1) + 1);
+            }
+        }
+        return unconsumed;
+    }
+
+    /**
      * Processes the consumed map to create optimized sequence ranges in the mergedConsumed map.
      * This method performs two key optimizations:
      * 1. Merges adjacent or overlapping ranges into single continuous ranges

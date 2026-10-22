@@ -709,6 +709,99 @@ public class ProofTaskTest {
     }
 
     @Test
+    public void testSharedModeInFlightGapsAreNotMissed() throws Exception {
+        ProofTask task = newSharedTask();
+        try {
+            sharedTick(task, 9, new long[]{0, 9});
+            // 13 is still on its way to another consumer, not missed
+            sharedTick(task, 19, new long[]{10, 12}, new long[]{14, 17});
+
+            assertEquals(task.getSummary().verified(), 13L);
+            assertEquals(task.getSummary().missed(), 0);
+        } finally {
+            task.getExecutor().shutdownNow();
+        }
+    }
+
+    @Test
+    public void testSharedModeCountsMessagesStillMissingAfterTimeout() throws Exception {
+        ProofTask task = newSharedTask();
+        try {
+            sharedTick(task, 9, new long[]{0, 9});
+            sharedTick(task, 19, new long[]{10, 12}, new long[]{14, 14}, new long[]{16, 17});
+
+            // The in-check up to seq 19 times out: 15 arrived, 13 did not, 23-25 are past the in-check
+            setLongField(task, "checkPointInCheckTimeStamps", System.currentTimeMillis() - 60_000L);
+            sharedTick(task, 25, new long[]{14, 22});
+            assertEquals(task.getTimeouts(), 1);
+            assertEquals(task.getSummary().missed(), 1);
+
+            sharedTick(task, 25, new long[]{13, 25});
+            assertEquals(task.getSummary().missed(), 0);
+        } finally {
+            task.getExecutor().shutdownNow();
+        }
+    }
+
+    @Test
+    public void testSharedModeFinalVerificationReportsUnconsumedMessages() throws Exception {
+        ProofTask task = newSharedTask();
+        try {
+            ProducerCheckpoint producerCp = new ProducerCheckpoint();
+            producerCp.addPublished("key0", new LongSeq(19, MessageMetadata.empty()));
+            // 13 and 19 never arrive
+            doReturn(Pair.of(producerCp, consumed(new long[]{0, 12}, new long[]{14, 18})))
+                    .when(task).aggregateCheckpoints();
+
+            invokeRunFinalVerification(task);
+
+            assertEquals(task.getSummary().missed(), 2);
+        } finally {
+            task.getExecutor().shutdownNow();
+        }
+    }
+
+    private static ProofTask newSharedTask() {
+        Proof proof = Proof.builder()
+                .id("test-proof")
+                .topic("test-topic")
+                .features(List.of("at_least_once"))
+                .timeout(30)
+                .finalWaitSeconds(0)
+                .pulsar(PulsarProofConfig.builder()
+                        .consumerConfig(Map.of("subscriptionType", "Shared"))
+                        .build())
+                .build();
+        return spy(new ProofTask(proof, new Configs(Map.of(), Map.of()), mock(ProofDriver.class)));
+    }
+
+    /** Runs one shared checkpoint verification with key0 published up to seq and consumed in ranges. */
+    private static void sharedTick(ProofTask task, long seq, long[]... ranges) throws Exception {
+        ProducerCheckpoint producerCp = new ProducerCheckpoint();
+        producerCp.addPublished("key0", new LongSeq(seq, MessageMetadata.empty()));
+        Field producerField = ProofTask.class.getDeclaredField("latestProducerCheckpoint");
+        producerField.setAccessible(true);
+        producerField.set(task, producerCp);
+        task.setLatestConsumerCheckpoint(consumed(ranges));
+        Method verifyShared = ProofTask.class.getDeclaredMethod("verifyShared");
+        verifyShared.setAccessible(true);
+        verifyShared.invoke(task);
+    }
+
+    private static ConsumerCheckPoint consumed(long[]... ranges) {
+        TreeMap<String, ConsumerCheckPoint.SeqRange> rangeMap = new TreeMap<>();
+        for (int i = 0; i < ranges.length; i++) {
+            ConsumerCheckPoint.SeqRange range = new ConsumerCheckPoint.SeqRange();
+            range.setStart(new LongSeq(ranges[i][0], MessageMetadata.empty()));
+            range.setEnd(new LongSeq(ranges[i][1], MessageMetadata.empty()));
+            rangeMap.put("t" + i, range);
+        }
+        ConsumerCheckPoint checkpoint = new ConsumerCheckPoint();
+        checkpoint.addKey("key0", rangeMap);
+        return checkpoint;
+    }
+
+    @Test
     public void testVerifiedStallResetsOnIncrease() throws Exception {
         ProofDriver driver = mock(ProofDriver.class);
         Proof proof = Proof.builder().topic("test-topic").features(List.of("at_least_once")).build();

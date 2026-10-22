@@ -148,7 +148,7 @@ Instead of checking `getLastSeq(key) >= producerSeq` (which only confirms the hi
 **Summary reporting for Shared mode:**
 - `verified`: sum of `(highWatermark + 1)` across all keys (sequences are 0-based)
 - `duplicates`: detected via existing `SeqRange.duplicated` overlap counting
-- `missed`: internal gaps in merged ranges
+- `missed`: sequences up to the producer checkpoint under verification that are still not consumed once it timed out (or once the final wait is over). Gaps above it are messages still on their way to another consumer, so they are not counted
 - `outOfOrders`: always 0 (expected for Shared, not reported)
 
 **API example:**
