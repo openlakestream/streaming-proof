@@ -761,6 +761,23 @@ public class ProofTaskTest {
         }
     }
 
+    @Test
+    public void testSharedModeMissedIsClampedInsteadOfOverflowing() throws Exception {
+        ProofTask task = newSharedTask();
+        try {
+            ProducerCheckpoint producerCp = new ProducerCheckpoint();
+            producerCp.addPublished("key0", new LongSeq(Integer.MAX_VALUE, MessageMetadata.empty()));
+            // Nothing consumed: Integer.MAX_VALUE + 1 messages are missing
+            doReturn(Pair.of(producerCp, new ConsumerCheckPoint())).when(task).aggregateCheckpoints();
+
+            invokeRunFinalVerification(task);
+
+            assertEquals(task.getSummary().missed(), Integer.MAX_VALUE);
+        } finally {
+            task.getExecutor().shutdownNow();
+        }
+    }
+
     private static ProofTask newSharedTask() {
         Proof proof = Proof.builder()
                 .id("test-proof")

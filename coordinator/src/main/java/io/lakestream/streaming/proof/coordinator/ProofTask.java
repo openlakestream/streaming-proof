@@ -890,10 +890,12 @@ public class ProofTask {
         if (!failed) {
             return 0;
         }
-        return (int) inCheck.getPublished().entrySet().stream()
+        long missed = inCheck.getPublished().entrySet().stream()
                 .mapToLong(entry -> latestConsumerCheckpoint.countUnconsumed(entry.getKey(),
                         highWatermarks.getOrDefault(entry.getKey(), -1L), entry.getValue().seq()))
                 .sum();
+        // Clamp: a count wrapped to a negative int would let the run pass
+        return (int) Math.min(missed, Integer.MAX_VALUE);
     }
 
     /**
