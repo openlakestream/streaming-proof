@@ -278,6 +278,16 @@ topics have no partitions or subscription types, so `partitions` and `pulsar.con
   - `checkpoint`: per-key ordered reads with no broker-managed position or acknowledgment, verified like `stream`.
     The consumers form a group that shares the segments, and each segment is read from its first message.
 
+To exercise **checkpoint capture and restore**, configure a dedicated Pulsar driver's `driverConfigs`
+with `"pulsar.checkpoint.restart.messages": 1000` and submit a scalable proof with
+`"consumerType": "checkpoint"` and `"consumers": 1`. Every 1000 processed messages the reader captures
+and serializes its checkpoint, closes, deserializes the saved bytes, and creates a new reader from that
+position. The proof retains its message verification history across reader restarts, so skipped messages
+remain detectable. Restore failures retry the saved checkpoint rather than silently starting over.
+Successful restores are recorded in worker logs. This opt-in recovery mode uses an ungrouped reader;
+leave the setting at its default `0` for the existing grouped checkpoint-consumer behavior. It does not
+restart workers or persist checkpoints across worker-process failures.
+
 The `offload.condition.*` settings apply to classic topics only. The broker splits and merges segments on its own
 unless auto scaling is disabled for the namespace or topic.
 
