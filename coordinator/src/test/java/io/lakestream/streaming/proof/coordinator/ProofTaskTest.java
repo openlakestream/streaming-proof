@@ -53,6 +53,7 @@ import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.apache.commons.lang3.tuple.Pair;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.testng.annotations.Test;
 
@@ -773,6 +774,28 @@ public class ProofTaskTest {
             invokeRunFinalVerification(task);
 
             assertEquals(task.getSummary().missed(), Integer.MAX_VALUE);
+        } finally {
+            task.getExecutor().shutdownNow();
+        }
+    }
+
+    @Test
+    public void testCompletionNotificationCarriesFinalVerificationResult() throws Exception {
+        ProofTask task = newSharedTask();
+        try {
+            ProducerCheckpoint producerCp = new ProducerCheckpoint();
+            producerCp.addPublished("key0", new LongSeq(19, MessageMetadata.empty()));
+            // No timeout fired during the run, and 13 and 19 never arrive
+            doReturn(Pair.of(producerCp, consumed(new long[]{0, 12}, new long[]{14, 18})))
+                    .when(task).aggregateCheckpoints();
+
+            Method method = ProofTask.class.getDeclaredMethod("completeProofAfterDuration");
+            method.setAccessible(true);
+            method.invoke(task);
+
+            ArgumentCaptor<ProofSummary> notified = ArgumentCaptor.forClass(ProofSummary.class);
+            verify(task).sendCompletionNotification(notified.capture());
+            assertEquals(notified.getValue().missed(), 2);
         } finally {
             task.getExecutor().shutdownNow();
         }

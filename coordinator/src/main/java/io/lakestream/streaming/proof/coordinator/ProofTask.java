@@ -50,6 +50,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -665,7 +666,6 @@ public class ProofTask {
         log.info("Stopping proof task {} after reaching the specified duration of {} seconds",
                 proof.getId(), proof.getDuration());
         recordTimeSeriesPoint();
-        sendCompletionNotification(getSummary());
         stop();
     }
 
@@ -1485,12 +1485,13 @@ public class ProofTask {
      * Sends webhook notification when proof test completes with results.
      *
      * @param summary The proof execution summary
+     * @return A future that completes once the notification is sent or failed, never exceptionally
      */
-    public void sendCompletionNotification(ProofSummary summary) {
+    public CompletableFuture<Void> sendCompletionNotification(ProofSummary summary) {
         if (proof.getWebhookConfig() != null && proof.getWebhookConfig().isEnabled()) {
             try {
-                webhookService.sendProofCompletionNotification(proof, summary)
-                        .whenComplete((result, throwable) -> {
+                return webhookService.sendProofCompletionNotification(proof, summary)
+                        .handle((result, throwable) -> {
                             if (throwable != null) {
                                 log.error("Failed to send completion webhook notification for proof {}",
                                         proof.getId(), throwable);
@@ -1498,12 +1499,14 @@ public class ProofTask {
                                 log.info("Successfully sent completion webhook notification for proof {}",
                                         proof.getId());
                             }
+                            return null;
                         });
             } catch (Exception e) {
                 log.error("Error sending completion webhook notification for proof {}",
                         proof.getId(), e);
             }
         }
+        return CompletableFuture.completedFuture(null);
     }
 
     /**
@@ -1541,6 +1544,11 @@ public class ProofTask {
         // settled, while worker metrics are still available.
         latestPerformanceSummary = buildPerformanceSummary(getSummary());
 
+        // Notify only after final verification, so the webhook carries the final result
+        CompletableFuture<Void> notification = completionHandled.get()
+                ? sendCompletionNotification(getSummary())
+                : CompletableFuture.completedFuture(null);
+
         clients.forEach(client -> {
             try {
                 client.stopAndRemoveConsumers(proof.getId()).join();
@@ -1550,6 +1558,8 @@ public class ProofTask {
         });
 
         if (webhookService != null) {
+            // Closing the HTTP client aborts a notification still in flight
+            notification.join();
             webhookService.close();
         }
 
