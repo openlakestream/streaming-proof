@@ -24,13 +24,13 @@ import com.fasterxml.jackson.annotation.JsonInclude;
  *
  * @param proof The original proof configuration
  * @param status Current execution status, such as {@code running} or {@code stopped}
- * @param resultStatus Current result state, such as {@code running}, {@code passed}, or {@code failed}
  * @param resultReason Human-readable explanation for the current result state
  * @param clusterTargets Resolved driver targets and sanitized endpoints for the current run
  * @param summary Correctness summary for the proof
  * @param checkpointSummary Compact checkpoint counts for the UI
  * @param performanceSummary Compact performance summary derived from live checkpoints
  * @param timeSeries Sampled history captured during checkpointing
+ * @param completionTime Recorded completion time, or null while the run has not finished
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record ProofReport(
@@ -41,5 +41,6 @@ public record ProofReport(
         ProofSummary summary,
         ProofCheckpointSummary checkpointSummary,
         ProofPerformanceSummary performanceSummary,
-        java.util.List<ProofTimeSeriesPoint> timeSeries) {
+        java.util.List<ProofTimeSeriesPoint> timeSeries,
+        String completionTime) {
 }

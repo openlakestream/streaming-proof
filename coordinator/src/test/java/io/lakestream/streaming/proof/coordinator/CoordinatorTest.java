@@ -162,7 +162,7 @@ public class CoordinatorTest {
                 .build();
         ProofTask task = mock(ProofTask.class);
         doReturn(proof).when(task).getProof();
-        doReturn(new ProofReport(proof, "running", null, null, null, null, null, null))
+        doReturn(new ProofReport(proof, "running", null, null, null, null, null, null, null))
                 .when(task).getReport();
         coordinator.getProofs().put(id, task);
     }

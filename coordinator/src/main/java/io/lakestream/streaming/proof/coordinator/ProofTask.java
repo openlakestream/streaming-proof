@@ -965,14 +965,19 @@ public class ProofTask {
      * @return A compact report view of the proof run
      */
     public ProofReport getReport() {
+        return buildReport(false);
+    }
+
+    /** Builds a terminal result for notifications without ending the cleanup lifecycle. */
+    private ProofReport buildReport(boolean finalResult) {
         ProofSummary summary = getSummary();
-        ProofPerformanceSummary performanceSummary = running.get()
+        ProofPerformanceSummary performanceSummary = running.get() && !finalResult
                 ? buildPerformanceSummary(summary)
                 : latestPerformanceSummary != null
                         ? latestPerformanceSummary
                         : buildPerformanceSummary(summary);
-        String status = determineResultStatus(summary, performanceSummary);
-        String resultReason = determineResultReason(summary, performanceSummary, status);
+        String status = determineResultStatus(summary, performanceSummary, finalResult);
+        String resultReason = determineResultReason(summary, performanceSummary, status, finalResult);
         // Append a trailing point that extends the chart to the current elapsed time.
         // Reuse the last windowed point's rates and latency so the chart stays flat
         // instead of snapping to the cumulative average.  Only the absolute counters
@@ -1018,7 +1023,10 @@ public class ProofTask {
                         countProducerKeys(lastFailedProducerCheckpoint),
                         countConsumerKeys(lastFailedConsumerCheckpoint)),
                 performanceSummary,
-                List.copyOf(reportTimeSeries));
+                List.copyOf(reportTimeSeries),
+                completionMillis > 0 ? java.time.Instant.ofEpochMilli(completionMillis)
+                        .atZone(java.time.ZoneId.systemDefault()).toLocalDateTime()
+                        .format(DateTimeFormatter.ISO_LOCAL_DATE_TIME) : null);
     }
 
     private List<ProofClusterTarget> resolveClusterTargets() {
@@ -1165,11 +1173,12 @@ public class ProofTask {
                 buildLatencySummary(workerMetrics.endToEndLatency()));
     }
 
-    private String determineResultStatus(ProofSummary summary, ProofPerformanceSummary performanceSummary) {
+    private String determineResultStatus(
+            ProofSummary summary, ProofPerformanceSummary performanceSummary, boolean finalResult) {
         if (startFailureReason != null) {
             return "failed";
         }
-        if (running.get()) {
+        if (running.get() && !finalResult) {
             return stopping.get() ? "stopping" : "running";
         }
         if (manuallyStopped.get()) {
@@ -1186,11 +1195,12 @@ public class ProofTask {
     }
 
     private String determineResultReason(
-            ProofSummary summary, ProofPerformanceSummary performanceSummary, String resultStatus) {
+            ProofSummary summary, ProofPerformanceSummary performanceSummary,
+            String resultStatus, boolean finalResult) {
         if (startFailureReason != null) {
             return "The run failed to start: " + startFailureReason;
         }
-        if (running.get()) {
+        if (running.get() && !finalResult) {
             if (stopping.get()) {
                 return "Stop requested. Final verification is still in progress.";
             }
@@ -1494,13 +1504,13 @@ public class ProofTask {
     /**
      * Sends webhook notification when proof test completes with results.
      *
-     * @param summary The proof execution summary
+     * @param report The final proof report
      * @return A future that completes once the notification is sent or failed, never exceptionally
      */
-    public CompletableFuture<Void> sendCompletionNotification(ProofSummary summary) {
+    public CompletableFuture<Void> sendCompletionNotification(ProofReport report) {
         if (proof.getWebhookConfig() != null && proof.getWebhookConfig().isEnabled()) {
             try {
-                return webhookService.sendProofCompletionNotification(proof, summary)
+                return webhookService.sendProofCompletionNotification(report)
                         .handle((result, throwable) -> {
                             if (throwable != null) {
                                 log.error("Failed to send completion webhook notification for proof {}",
@@ -1560,8 +1570,8 @@ public class ProofTask {
         // Notify after final verification, so the webhook carries the final result. Wait for it
         // before removing consumers, so reports during the wait still read their metrics, and
         // before closing the webhook client, which would abort it.
-        if (completionHandled.get()) {
-            sendCompletionNotification(getSummary()).join();
+        if (completionHandled.get() && !manuallyStopped.get()) {
+            sendCompletionNotification(buildReport(true)).join();
         }
 
         clients.forEach(client -> {
@@ -1576,8 +1586,7 @@ public class ProofTask {
             webhookService.close();
         }
 
-        // Mark as stopped only after all cleanup is complete, so the
-        // report API never returns "stopped" with stale data.
+        // Keep the UI in stopping until consumer cleanup and notification are complete.
         running.set(false);
         log.info("ProofTask {} stopped", proof.getId());
     }

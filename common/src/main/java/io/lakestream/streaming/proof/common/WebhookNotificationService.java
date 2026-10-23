@@ -15,6 +15,7 @@ package io.lakestream.streaming.proof.common;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.lakestream.streaming.proof.common.records.Proof;
+import io.lakestream.streaming.proof.common.records.ProofReport;
 import io.lakestream.streaming.proof.common.records.ProofSummary;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -52,17 +53,17 @@ public class WebhookNotificationService {
     /**
      * Sends a webhook notification for proof completion.
      * 
-     * @param proof The proof configuration
-     * @param summary The proof execution summary
+     * @param report The final proof report, including its result and correctness summary
      * @return CompletableFuture that completes when notification is sent
      */
-    public CompletableFuture<Void> sendProofCompletionNotification(Proof proof, ProofSummary summary) {
+    public CompletableFuture<Void> sendProofCompletionNotification(ProofReport report) {
+        Proof proof = report.proof();
         if (proof.getWebhookConfig() == null || !proof.getWebhookConfig().isEnabled()) {
             return CompletableFuture.completedFuture(null);
         }
         
         try {
-            String message = buildCompletionMessage(proof, summary);
+            String message = buildCompletionMessage(report);
             return sendWebhook(proof.getWebhookConfig(), message);
         } catch (Exception e) {
             log.error("Failed to send proof completion notification for proof {}", proof.getId(), e);
@@ -169,11 +170,12 @@ public class WebhookNotificationService {
     /**
      * Builds a completion message for the proof.
      * 
-     * @param proof The proof configuration
-     * @param summary The proof execution summary
+     * @param report The final proof report
      * @return The formatted message
      */
-    private String buildCompletionMessage(Proof proof, ProofSummary summary) {
+    private String buildCompletionMessage(ProofReport report) {
+        Proof proof = report.proof();
+        ProofSummary summary = report.summary();
         StringBuilder message = new StringBuilder();
         message.append("Streaming Proof Test Completed\n\n");
         message.append("Proof ID: ").append(proof.getId()).append("\n");
@@ -182,13 +184,21 @@ public class WebhookNotificationService {
         message.append("Topic: ").append(proof.getTopic()).append("\n");
         message.append("Duration: ").append(proof.getDuration()).append(" seconds\n");
         message.append("Start Time: ").append(proof.getStartTime()).append("\n");
-        message.append("Completion Time: ")
-                .append(LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
-                .append("\n\n");
+        if (report.completionTime() != null) {
+            message.append("Completion Time: ").append(report.completionTime()).append("\n");
+        }
+        message.append("\n");
         
+        String statusPrefix = switch (report.status()) {
+            case "passed" -> "✅ ";
+            case "failed" -> "❌ ";
+            default -> "";
+        };
+        message.append("Status: ").append(statusPrefix).append(report.status()).append("\n");
+        if (report.resultReason() != null) {
+            message.append("Reason: ").append(report.resultReason()).append("\n");
+        }
         if (summary != null) {
-            boolean isSuccess = summary.outOfOrders() == 0 && summary.missed() == 0;
-            message.append("Status: ").append(isSuccess ? "✅ SUCCESS" : "❌ FAILED").append("\n");
             message.append("Verified: ").append(summary.verified()).append("\n");
             if (summary.outOfOrders() > 0) {
                 message.append("Out of Orders: ").append(summary.outOfOrders()).append("\n");
