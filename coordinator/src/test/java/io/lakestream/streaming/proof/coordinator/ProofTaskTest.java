@@ -13,6 +13,8 @@
  */
 package io.lakestream.streaming.proof.coordinator;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
@@ -51,6 +53,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.apache.commons.lang3.tuple.Pair;
 import org.mockito.ArgumentCaptor;
@@ -796,6 +799,29 @@ public class ProofTaskTest {
             ArgumentCaptor<ProofSummary> notified = ArgumentCaptor.forClass(ProofSummary.class);
             verify(task).sendCompletionNotification(notified.capture());
             assertEquals(notified.getValue().missed(), 2);
+        } finally {
+            task.getExecutor().shutdownNow();
+        }
+    }
+
+    @Test
+    public void testSlowCompletionWebhookDoesNotCountAsStall() throws Exception {
+        ProofTask task = newSharedTask();
+        try {
+            getRunningFlag(task).set(true);
+            ProducerCheckpoint producerCp = new ProducerCheckpoint();
+            producerCp.addPublished("key0", new LongSeq(9, MessageMetadata.empty()));
+            doReturn(Pair.of(producerCp, consumed(new long[]{0, 9}))).when(task).aggregateCheckpoints();
+            doAnswer(invocation -> {
+                Thread.sleep(1_100); // a slow webhook endpoint
+                return CompletableFuture.completedFuture(null);
+            }).when(task).sendCompletionNotification(any());
+
+            Method method = ProofTask.class.getDeclaredMethod("completeProofAfterDuration");
+            method.setAccessible(true);
+            method.invoke(task);
+
+            assertEquals(task.getSummary().maxVerifiedStallSeconds(), 0L);
         } finally {
             task.getExecutor().shutdownNow();
         }

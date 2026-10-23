@@ -815,11 +815,11 @@ public class ProofTask {
 
     /**
      * Wall-clock seconds since the verified count last increased. While the run
-     * is active this grows with the clock; once stopped it is frozen at the
-     * completion time so historical reports stay stable.
+     * is verifying this grows with the clock; once the final verification is done
+     * it is frozen at the completion time so historical reports stay stable.
      */
     private long computeVerifiedStallSeconds() {
-        long end = running.get() ? System.currentTimeMillis() : completionMillis;
+        long end = running.get() && completionMillis == 0 ? System.currentTimeMillis() : completionMillis;
         return Math.max(0L, (end - lastVerifiedChangeMillis) / 1000);
     }
 
@@ -828,7 +828,7 @@ public class ProofTask {
      * peak so the value is correct between ticks, and is frozen at completion.
      */
     private long computeMaxVerifiedStallSeconds() {
-        long end = running.get() ? System.currentTimeMillis() : completionMillis;
+        long end = running.get() && completionMillis == 0 ? System.currentTimeMillis() : completionMillis;
         long liveStallMillis = end - lastVerifiedChangeMillis;
         return Math.max(0L, Math.max(maxVerifiedStallMillis, liveStallMillis)) / 1000;
     }
@@ -1540,14 +1540,19 @@ public class ProofTask {
         // fully-verified state after all consumers have caught up.
         recordTimeSeriesPoint();
 
+        // Verification ends here: stopping consumers and notifying must not count as a stall
+        completionMillis = System.currentTimeMillis();
+
         // Build the final performance snapshot after verification has
         // settled, while worker metrics are still available.
         latestPerformanceSummary = buildPerformanceSummary(getSummary());
 
-        // Notify only after final verification, so the webhook carries the final result
-        CompletableFuture<Void> notification = completionHandled.get()
-                ? sendCompletionNotification(getSummary())
-                : CompletableFuture.completedFuture(null);
+        // Notify after final verification, so the webhook carries the final result. Wait for it
+        // before removing consumers, so reports during the wait still read their metrics, and
+        // before closing the webhook client, which would abort it.
+        if (completionHandled.get()) {
+            sendCompletionNotification(getSummary()).join();
+        }
 
         clients.forEach(client -> {
             try {
@@ -1558,14 +1563,11 @@ public class ProofTask {
         });
 
         if (webhookService != null) {
-            // Closing the HTTP client aborts a notification still in flight
-            notification.join();
             webhookService.close();
         }
 
         // Mark as stopped only after all cleanup is complete, so the
         // report API never returns "stopped" with stale data.
-        completionMillis = System.currentTimeMillis();
         running.set(false);
         log.info("ProofTask {} stopped", proof.getId());
     }
