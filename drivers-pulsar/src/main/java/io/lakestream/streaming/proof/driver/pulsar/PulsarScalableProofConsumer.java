@@ -61,6 +61,11 @@ public class PulsarScalableProofConsumer implements ProofConsumer {
 
     public PulsarScalableProofConsumer(String name, PulsarClient client, String topic, String consumerType,
             long consumeDelayMs, MessageListener listener) throws PulsarClientException {
+        this(name, client, topic, consumerType, consumeDelayMs, listener, 0);
+    }
+
+    public PulsarScalableProofConsumer(String name, PulsarClient client, String topic, String consumerType,
+            long consumeDelayMs, MessageListener listener, int checkpointRestartMessages) throws PulsarClientException {
         this.name = name;
         this.messageListener = listener;
         this.consumeDelayMs = consumeDelayMs;
@@ -78,15 +83,27 @@ public class PulsarScalableProofConsumer implements ProofConsumer {
                 this.negativeAcknowledger = queue::negativeAcknowledge;
             }
             case "checkpoint" -> {
-                CheckpointConsumer<byte[]> checkpoint = client.newCheckpointConsumer(Schema.bytes())
-                        .topic(topic)
-                        .consumerGroup(SUBSCRIPTION)
-                        .consumerName(name)
-                        .startPosition(Checkpoint.earliest())
-                        .create();
-                this.consumer = checkpoint;
-                this.receiver = checkpoint::receive;
-                this.acknowledger = id -> { };
+                if (checkpointRestartMessages > 0) {
+                    CheckpointRecoveryConsumer recovery = new CheckpointRecoveryConsumer(
+                            position -> client.newCheckpointConsumer(Schema.bytes())
+                                    .topic(topic)
+                                    .consumerName(name)
+                                    .startPosition(position)
+                                    .create(), checkpointRestartMessages);
+                    this.consumer = recovery;
+                    this.receiver = recovery::receive;
+                    this.acknowledger = id -> recovery.messageProcessed();
+                } else {
+                    CheckpointConsumer<byte[]> checkpoint = client.newCheckpointConsumer(Schema.bytes())
+                            .topic(topic)
+                            .consumerGroup(SUBSCRIPTION)
+                            .consumerName(name)
+                            .startPosition(Checkpoint.earliest())
+                            .create();
+                    this.consumer = checkpoint;
+                    this.receiver = checkpoint::receive;
+                    this.acknowledger = id -> { };
+                }
                 this.negativeAcknowledger = id -> { };
             }
             default -> {

@@ -52,6 +52,9 @@ import org.apache.commons.lang3.tuple.Pair;
 @Data
 public class ConsumerCheckPoint {
 
+    /** Cumulative recovery-mode replay violations; never discarded by watermark trimming. */
+    private long checkpointReplayCount;
+
     /**
      * Represents a range of sequence numbers for tracking message consumption.
      * 
@@ -237,6 +240,7 @@ public class ConsumerCheckPoint {
      * @param checkPoint The checkpoint to merge into this one
      */
     public void merge(ConsumerCheckPoint checkPoint) {
+        checkpointReplayCount += checkPoint.checkpointReplayCount;
         checkPoint.consumed.forEach(this::addKey);
         checkPoint.writeDupsOrOutOrder.forEach(this::addWriteDupsOrOutOrder);
     }

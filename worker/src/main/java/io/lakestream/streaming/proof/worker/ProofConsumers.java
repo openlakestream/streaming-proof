@@ -83,10 +83,13 @@ public class ProofConsumers {
         if (newConsumers.pulsarConsumerType() != null) {
             configs.put("pulsar.consumer.type", newConsumers.pulsarConsumerType());
         }
+        Integer restartMessages = newConsumers.pulsarCheckpointRestartMessages();
+        configs.put("pulsar.checkpoint.restart.messages", restartMessages == null ? 0 : restartMessages);
+        boolean recoveryMode = restartMessages != null && restartMessages > 0;
         boolean sharedMode = PulsarProofConfig.isSharedMode(
                 newConsumers.pulsarConsumerConfig(), newConsumers.pulsarConsumerType());
         for (int i = 0; i < newConsumers.consumers(); i++) {
-            ProofConsumerTask task = new ProofConsumerTask(sharedMode, newConsumers.messageSize());
+            ProofConsumerTask task = new ProofConsumerTask(sharedMode, newConsumers.messageSize(), recoveryMode);
             ProofConsumer proofConsumer = driver.createConsumer(newConsumers.topic(), newConsumers.partitions(),
                     newConsumers.consumeDelayMs(), configs, task);
             task.setConsumer(proofConsumer);
@@ -102,6 +105,8 @@ public class ProofConsumers {
     public ConsumerCheckPoint checkPoint() {
         ConsumerCheckPoint checkpoint = new ConsumerCheckPoint();
         for (ProofConsumerTask task : tasks) {
+            checkpoint.setCheckpointReplayCount(
+                    checkpoint.getCheckpointReplayCount() + task.getCheckpointReplayCount());
             task.getTrimmedConsumed().forEach(checkpoint::addKey);
             task.getWriteDupsOrOutOrder().forEach(checkpoint::addWriteDupsOrOutOrder);
         }
@@ -119,6 +124,7 @@ public class ProofConsumers {
         Map<String, ConsumerCheckPoint> result = new HashMap<>();
         for (ProofConsumerTask task : tasks) {
             ConsumerCheckPoint checkPoint = new ConsumerCheckPoint();
+            checkPoint.setCheckpointReplayCount(task.getCheckpointReplayCount());
             task.getTrimmedConsumed().forEach(checkPoint::addKey);
             task.getWriteDupsOrOutOrder().forEach(checkPoint::addWriteDupsOrOutOrder);
             result.put(task.getConsumerName(), checkPoint);

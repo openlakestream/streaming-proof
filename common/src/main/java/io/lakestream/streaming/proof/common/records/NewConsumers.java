@@ -47,6 +47,8 @@ import java.util.Map;
  * @param pulsarConsumerType The Pulsar consumer type for scalable topics ("stream", "queue" or "checkpoint"),
  *                           or null
  *
+ * @param pulsarCheckpointRestartMessages Per-proof serialized checkpoint restart interval, or null
+ *
  * @see Driver
  * @see ProofConsumer
  */
@@ -59,5 +61,12 @@ public record NewConsumers(String id,
                            String driverName,
                            Driver driver,
                            Map<String, Object> pulsarConsumerConfig,
-                           String pulsarConsumerType) {
+                           String pulsarConsumerType,
+                           Integer pulsarCheckpointRestartMessages) {
+    public NewConsumers(String id, String topic, int partitions, int consumers, long consumeDelayMs,
+                        int messageSize, String driverName, Driver driver,
+                        Map<String, Object> pulsarConsumerConfig, String pulsarConsumerType) {
+        this(id, topic, partitions, consumers, consumeDelayMs, messageSize, driverName, driver,
+                pulsarConsumerConfig, pulsarConsumerType, null);
+    }
 }

@@ -320,8 +320,14 @@ public class PulsarProofDriver implements ProofDriver {
         if (OffloadCondition.getOffloadCondition(admin, topicName, configs).isPresent()) {
             throw new IllegalArgumentException("Offload conditions are not supported for scalable topics");
         }
+        int checkpointRestartMessages = Integer.parseInt(
+                String.valueOf(configs.getOrDefault("pulsar.checkpoint.restart.messages", 0)));
+        if (checkpointRestartMessages < 0) {
+            throw new IllegalArgumentException("pulsar.checkpoint.restart.messages must not be negative");
+        }
         return new PulsarScalableProofConsumer(consumerName, getOrCreateScalableClient(), topicName,
-                (String) configs.getOrDefault(PULSAR_CONSUMER_TYPE, "stream"), consumeDelayMs, listener);
+                (String) configs.getOrDefault(PULSAR_CONSUMER_TYPE, "stream"), consumeDelayMs, listener,
+                checkpointRestartMessages);
     }
 
     /**

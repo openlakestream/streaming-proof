@@ -59,12 +59,24 @@ public class ProofConsumerTask implements MessageListener, AutoCloseable {
     }
 
     public ProofConsumerTask(boolean sharedMode, int messageSize) {
+        this(sharedMode, messageSize, false);
+    }
+
+    public ProofConsumerTask(boolean sharedMode, int messageSize, boolean checkpointRecovery) {
+        this.checkpointRecovery = checkpointRecovery;
         this.sharedMode = sharedMode;
         this.messageSize = messageSize;
     }
 
     /** Total size in bytes of each message value, used for throughput accounting */
     private final int messageSize;
+    private final boolean checkpointRecovery;
+    private final Map<String, Long> recoveryHighSequences = new HashMap<>();
+    private long checkpointReplayCount;
+
+    public synchronized long getCheckpointReplayCount() {
+        return checkpointReplayCount;
+    }
 
     /**
      * Map storing consumed sequence ranges for each key.
@@ -106,6 +118,13 @@ public class ProofConsumerTask implements MessageListener, AutoCloseable {
      */
     @Override
     public synchronized void onMessage(String key, long value, MessageMetadata metadata) {
+        if (checkpointRecovery) {
+            Long previous = recoveryHighSequences.get(key);
+            if (previous != null && value <= previous) {
+                checkpointReplayCount++;
+            }
+            recoveryHighSequences.merge(key, value, Math::max);
+        }
         receivedMessages.incrementAndGet();
         receivedBytes.addAndGet(estimateMessageBytes(key));
         if (metadata != null && metadata.publishTimestampMillis() != null && metadata.publishTimestampMillis() > 0) {

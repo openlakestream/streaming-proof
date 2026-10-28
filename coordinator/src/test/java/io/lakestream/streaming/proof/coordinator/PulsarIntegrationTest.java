@@ -13,6 +13,7 @@
  */
 package io.lakestream.streaming.proof.coordinator;
 
+import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertTrue;
 
 import io.lakestream.streaming.proof.common.CoordinatorHttpClient;
@@ -48,10 +49,12 @@ public class PulsarIntegrationTest {
     private CoordinatorHttpClient httpClient;
     private PulsarContainer pulsarContainer;
     private int workerPort;
+    private int coordinatorPort;
 
     @BeforeClass
     public void setUp() throws Exception {
         int port = getFreePort();
+        coordinatorPort = port;
         workerPort = getFreePort();
 
         pulsarContainer = new PulsarContainer(DockerImageName.parse("apachepulsar/pulsar:5.0.0"));
@@ -273,6 +276,49 @@ public class PulsarIntegrationTest {
                         .build())
                 .build();
         runProofAndVerify(proof);
+    }
+
+    @Test
+    public void testScalableTopicSerializedCheckpointRecovery() throws Exception {
+        int restartMessages = 20;
+        Proof proof = Proof.builder()
+                .name(UUID.randomUUID().toString())
+                .driver("pulsar_driver")
+                .keys(4).producers(1).consumers(1)
+                .features(List.of("at_least_once", "ordering"))
+                .checkPointInterval(2).msgRate(40).timeout(30).duration(20).finalWaitSeconds(10)
+                .pulsar(PulsarProofConfig.builder().scalableTopicEnabled(true).initialSegments(1)
+                        .consumerType("checkpoint").checkpointRestartMessages(restartMessages).build())
+                .build();
+        httpClient.createProof(proof).join();
+        String proofId = findProofId(proof.getName());
+        try {
+            Awaitility.await().atMost(1, TimeUnit.MINUTES).untilAsserted(() -> {
+                ProofDetails details = httpClient.getProof(proofId).join();
+                assertTrue(details.summary().verified() > 3L * restartMessages,
+                        "Verification must advance across several serialized reader restarts");
+            });
+            long firstVerified = httpClient.getProof(proofId).join().summary().verified();
+            Awaitility.await().atMost(30, TimeUnit.SECONDS).untilAsserted(() -> {
+                ProofDetails details = httpClient.getProof(proofId).join();
+                assertTrue(details.summary().verified() > firstVerified + 3L * restartMessages);
+                assertEquals(details.summary().missed(), 0L);
+                assertEquals(details.summary().duplicates(), 0L);
+                assertEquals(details.summary().outOfOrders(), 0L);
+            });
+            Awaitility.await().atMost(1, TimeUnit.MINUTES).untilAsserted(() -> {
+                assertEquals(Util.JSON_MAPPER.readTree(client.prepareGet("http://localhost:" + coordinatorPort
+                        + Util.GET_PROOF_REPORT.replace("{id}", proofId)).execute().get().getResponseBody())
+                        .get("status").asText(), "passed");
+            });
+            ProofDetails details = httpClient.getProof(proofId).join();
+            assertEquals(details.summary().missed(), 0L);
+            assertEquals(details.summary().duplicates(), 0L);
+            assertEquals(details.summary().outOfOrders(), 0L);
+            assertEquals(details.summary().timeouts(), 0L);
+        } finally {
+            httpClient.deleteProof(proofId).join();
+        }
     }
 
     private void runWatermarkTrimmingTest(Proof proof) throws Exception {

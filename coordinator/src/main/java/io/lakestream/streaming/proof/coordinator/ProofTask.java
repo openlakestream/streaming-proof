@@ -478,7 +478,8 @@ public class ProofTask {
                     driverName,
                     configs.drivers().get(driverName),
                     pulsarConsumerConfig,
-                    pulsarConsumerType
+                    pulsarConsumerType,
+                    proof.getPulsar() == null ? null : proof.getPulsar().getCheckpointRestartMessages()
             );
             try {
                 clients.get(i).startConsumers(record).join();
@@ -780,6 +781,9 @@ public class ProofTask {
             }
         }
         // Order evidence must survive snapshot replacement, even when delivery verification is stalled.
+        aggregatedConsumerCheckpoint.setCheckpointReplayCount(Math.max(
+                aggregatedConsumerCheckpoint.getCheckpointReplayCount(),
+                latestConsumerCheckpoint.getCheckpointReplayCount()));
         aggregatedConsumerCheckpoint.calculate();
         aggregatedConsumerCheckpoint.mergeOutOfOrderSeqs(latestConsumerCheckpoint.getOutOfOrderSeqs());
         aggregatedConsumerCheckpoint.mergeOutOfOrderSeqs(lastVerifiedConsumerCheckpoint.getOutOfOrderSeqs());
@@ -878,7 +882,8 @@ public class ProofTask {
                                 .map(range -> range.getEnd().seq() - range.getStart().seq() - 1))
                         .mapToInt(Long::intValue)
                         .sum(),
-                lastVerifiedConsumerCheckpoint.getDuplicatedCount().values().stream().reduce(0L, Long::sum),
+                Math.max(lastVerifiedConsumerCheckpoint.getDuplicatedCount().values().stream().reduce(0L, Long::sum),
+                        isCheckpointRecovery() ? latestConsumerCheckpoint.getCheckpointReplayCount() : 0L),
                 lastVerifiedConsumerCheckpoint.getWriteDuplicatesSeqs().values().stream()
                         .flatMap(ranges -> ranges.stream()
                                 .map(range -> range.getEnd().seq() - range.getStart().seq() + 1))
@@ -1173,6 +1178,10 @@ public class ProofTask {
                 buildLatencySummary(workerMetrics.endToEndLatency()));
     }
 
+    private boolean isCheckpointRecovery() {
+        return proof.getPulsar() != null && proof.getPulsar().isCheckpointRecoveryEnabled();
+    }
+
     private String determineResultStatus(
             ProofSummary summary, ProofPerformanceSummary performanceSummary, boolean finalResult) {
         if (startFailureReason != null) {
@@ -1184,7 +1193,8 @@ public class ProofTask {
         if (manuallyStopped.get()) {
             return "stopped";
         }
-        if (summary.missed() > 0 || summary.outOfOrders() > 0) {
+        if (summary.missed() > 0 || summary.outOfOrders() > 0
+                || isCheckpointRecovery() && (summary.duplicates() > 0 || summary.writeDuplicates() > 0)) {
             return "failed";
         }
         if (proof.getMaxStallSeconds() > 0
@@ -1208,6 +1218,9 @@ public class ProofTask {
         }
         if (manuallyStopped.get()) {
             return "The run was stopped manually.";
+        }
+        if (isCheckpointRecovery() && (summary.duplicates() > 0 || summary.writeDuplicates() > 0)) {
+            return "Checkpoint recovery replayed previously consumed messages.";
         }
         if (summary.outOfOrders() > 0) {
             return "Out-of-order messages were detected.";

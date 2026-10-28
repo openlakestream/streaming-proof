@@ -286,6 +286,34 @@ topics have no partitions or subscription types, so `partitions` and `pulsar.con
   - `checkpoint`: per-key ordered reads with no broker-managed position or acknowledgment, verified like `stream`.
     The consumers form a group that shares the segments, and each segment is read from its first message.
 
+To exercise **checkpoint capture and restore**, submit a proof with `"consumers": 1` and:
+
+```json
+"pulsar": {
+  "scalableTopicEnabled": true,
+  "consumerType": "checkpoint",
+  "checkpointRestartMessages": 1000
+}
+```
+
+The optional positive `checkpointRestartMessages` field belongs to this proof; the Coordinator rejects
+classic topics, other consumer types and multiple consumers. Explicit URIs must use `topic://`;
+`persistent://` and other schemes are rejected before creating resources. Omitted or short topic names
+are normalized to scalable topic names. Driver-wide
+`pulsar.checkpoint.restart.messages` settings are rejected to prevent readers from masking each other's gaps.
+Every 1000 processed messages the ungrouped reader captures and serializes its checkpoint, closes,
+deserializes the saved bytes, and recreates the reader at that position. Failed restores retry the saved
+position without falling back to earliest. Reader-creation errors retain their original client exception.
+
+Recovery proofs fail on replay as well as missed or out-of-order messages. A cumulative per-key replay
+counter survives verification watermark trimming, so a historical replay cannot disappear from the final
+result. Ordinary grouped checkpoint proofs continue to allow at-least-once replay. Leave the field unset
+for the existing grouped behavior. Successful restores are logged by workers; this does not restart workers
+or persist checkpoints across worker-process failures.
+
+The Pulsar 5.0.0 client exhibited sealed-segment checkpoint replay defects after splits/merges
+(apache/pulsar#26837 and #26839). This mode must expose those defects as failures; it does not fix the client.
+
 The `offload.condition.*` settings apply to classic topics only. The broker splits and merges segments on its own
 unless auto scaling is disabled for the namespace or topic.
 

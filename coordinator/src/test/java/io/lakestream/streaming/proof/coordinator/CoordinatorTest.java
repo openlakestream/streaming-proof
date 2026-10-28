@@ -140,6 +140,65 @@ public class CoordinatorTest {
                 "pulsar.initialSegments and pulsar.consumerType require pulsar.scalableTopicEnabled.");
     }
 
+    @DataProvider
+    public Object[][] invalidCheckpointRecovery() {
+        return new Object[][] {
+                {false, "checkpoint", 1, 10},
+                {true, "stream", 1, 10},
+                {true, "queue", 1, 10},
+                {true, "checkpoint", 2, 10},
+                {true, "checkpoint", 0, 10},
+                {true, "checkpoint", 1, 0},
+                {true, "checkpoint", 1, -1}
+        };
+    }
+
+    @Test(dataProvider = "invalidCheckpointRecovery")
+    public void rejectsCheckpointRecoveryThatCanMaskLoss(boolean scalable, String type, int consumers, int restart) {
+        Coordinator coordinator = new Coordinator();
+        coordinator.updateConfigs(new Configs(Map.of(), Map.of("pulsar", new Driver("pulsar", Map.of()))));
+        Proof proof = pulsarProof(PulsarProofConfig.builder().scalableTopicEnabled(scalable)
+                .consumerType(type).checkpointRestartMessages(restart).build()).consumers(consumers).build();
+        expectThrows(IllegalArgumentException.class, () -> coordinator.createProof(proof));
+        assertNull(proof.getId());
+        assertEquals(coordinator.listProofs(), List.of());
+    }
+
+    @DataProvider
+    public Object[][] nonScalableRecoveryUris() {
+        return new Object[][] {
+                {"persistent://public/default/recovery"},
+                {"non-persistent://public/default/recovery"},
+                {"other://public/default/recovery"},
+                {"TOPIC://public/default/recovery"}
+        };
+    }
+
+    @Test(dataProvider = "nonScalableRecoveryUris")
+    public void rejectsExplicitNonScalableRecoveryUrisBeforeCreatingResources(String topic) {
+        Coordinator coordinator = new Coordinator();
+        coordinator.updateConfigs(new Configs(Map.of(), Map.of("pulsar", new Driver("pulsar", Map.of()))));
+        Proof proof = pulsarProof(PulsarProofConfig.builder().scalableTopicEnabled(true)
+                .consumerType("checkpoint").checkpointRestartMessages(20).build())
+                .topic(topic).consumers(1).build();
+        assertCreateProofRejected(coordinator, proof,
+                "Checkpoint recovery requires a topic:// URI or an unqualified topic name.");
+        assertNull(proof.getId());
+        assertEquals(coordinator.listProofs(), List.of());
+    }
+
+    @Test
+    public void rejectsDriverWideCheckpointRecovery() {
+        Coordinator coordinator = new Coordinator();
+        coordinator.updateConfigs(new Configs(Map.of(), Map.of("pulsar", new Driver("pulsar",
+                Map.of("pulsar.checkpoint.restart.messages", 10)))));
+        Proof proof = pulsarProof(PulsarProofConfig.builder().scalableTopicEnabled(true)
+                .consumerType("checkpoint").build()).consumers(1).build();
+        assertCreateProofRejected(coordinator, proof,
+                "Use per-proof pulsar.checkpointRestartMessages, not the driver-wide restart setting.");
+        assertNull(proof.getId());
+    }
+
     private static Proof.ProofBuilder pulsarProof(PulsarProofConfig pulsar) {
         return Proof.builder()
                 .name("scalable")

@@ -164,7 +164,22 @@ public class Coordinator {
             throw new IllegalArgumentException("Message size must be at least " + ProofValue.MIN_SIZE
                     + " bytes to hold the sequence number, got " + proof.getMessageSize() + ".");
         }
+        String consumerDriverName = proof.getDrivers() == null
+                ? proof.getDriver() : proof.getDrivers().consumer();
+        if (!configs.drivers().containsKey(consumerDriverName)) {
+            throw new IllegalArgumentException("Consumer driver " + consumerDriverName + " not found.");
+        }
+        if (configs.drivers().get(consumerDriverName).driverConfigs()
+                .containsKey("pulsar.checkpoint.restart.messages")) {
+            throw new IllegalArgumentException(
+                    "Use per-proof pulsar.checkpointRestartMessages, not the driver-wide restart setting.");
+        }
         validateScalableTopicSettings(proof);
+        if (proof.getPulsar() != null && proof.getPulsar().isCheckpointRecoveryEnabled()
+                && (!"pulsar".equals(configs.drivers().get(driverName).driverType())
+                    || !"pulsar".equals(configs.drivers().get(consumerDriverName).driverType()))) {
+            throw new IllegalArgumentException("Checkpoint recovery requires Pulsar admin and consumer drivers.");
+        }
         String proofID = RandomStringUtils.secure().nextAlphanumeric(5);
         proof.setId(proofID);
         ProofTask task = new ProofTask(proof, configs, driverCache.getDriver(driverName,
@@ -176,6 +191,21 @@ public class Coordinator {
     /** Scalable topics take initial segments and a consumer type instead of partitions and a subscription type. */
     private static void validateScalableTopicSettings(Proof proof) {
         PulsarProofConfig pulsar = proof.getPulsar();
+        if (pulsar != null && pulsar.getCheckpointRestartMessages() != null) {
+            if (pulsar.getCheckpointRestartMessages() <= 0) {
+                throw new IllegalArgumentException("pulsar.checkpointRestartMessages must be positive when set.");
+            }
+            if (!proof.isScalableTopic() || !"checkpoint".equals(pulsar.getConsumerType())
+                    || proof.getConsumers() != 1) {
+                throw new IllegalArgumentException(
+                        "Checkpoint recovery requires a scalable topic, consumerType=checkpoint and consumers=1.");
+            }
+            String topic = proof.getTopic();
+            if (topic != null && topic.contains("://") && !topic.startsWith("topic://")) {
+                throw new IllegalArgumentException(
+                        "Checkpoint recovery requires a topic:// URI or an unqualified topic name.");
+            }
+        }
         if (!proof.isScalableTopic()) {
             if (pulsar != null && (pulsar.getInitialSegments() != null || pulsar.getConsumerType() != null)) {
                 throw new IllegalArgumentException(

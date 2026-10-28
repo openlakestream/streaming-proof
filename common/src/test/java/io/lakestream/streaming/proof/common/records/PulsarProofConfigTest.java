@@ -27,6 +27,17 @@ import org.testng.annotations.Test;
 public class PulsarProofConfigTest {
 
     @Test
+    public void testCheckpointRecoveryProofConfigurationRoundTrip() throws Exception {
+        PulsarProofConfig config = PulsarProofConfig.builder().scalableTopicEnabled(true)
+                .consumerType("checkpoint").checkpointRestartMessages(10).build();
+        PulsarProofConfig restored = Util.JSON_MAPPER.readValue(
+                Util.JSON_MAPPER.writeValueAsString(config), PulsarProofConfig.class);
+        assertEquals(restored.getCheckpointRestartMessages(), Integer.valueOf(10));
+        assertTrue(restored.isCheckpointRecoveryEnabled());
+        assertNull(Util.JSON_MAPPER.readValue("{}", PulsarProofConfig.class).getCheckpointRestartMessages());
+    }
+
+    @Test
     public void testSerializationRoundTrip() throws Exception {
         PulsarProofConfig config = PulsarProofConfig.builder()
                 .consumerConfig(Map.of("subscriptionType", "Key_Shared"))

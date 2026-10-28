@@ -58,6 +58,14 @@ public class PulsarProofConfig {
      */
     private String consumerType;
 
+    /** Serialized reader restart interval; null disables recovery. Requires checkpoint mode and one consumer. */
+    private Integer checkpointRestartMessages;
+
+    @JsonIgnore
+    public boolean isCheckpointRecoveryEnabled() {
+        return checkpointRestartMessages != null && checkpointRestartMessages > 0;
+    }
+
     /**
      * Returns whether consumers receive messages without per-key ordering: a Shared subscription,
      * or queue consumers on a scalable topic.
