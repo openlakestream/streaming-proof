@@ -23,17 +23,30 @@ public class ProofPublishLatencyConfigTest {
     public void testDefaults() throws Exception {
         Proof proof = Util.JSON_MAPPER.readValue("{}", Proof.class);
         assertEquals(proof.getPublishLatencyP99LimitMillis(), 0L);
+        assertEquals(proof.getPublishLatencyWindowSeconds(), 60);
+        assertEquals(Proof.builder().build().getPublishLatencyWindowSeconds(), 60);
         assertEquals(proof.getPublishLatencyConsecutiveWindows(), 2);
         assertEquals(Proof.builder().build().getPublishLatencyP99LimitMillis(), 0L);
         assertEquals(Proof.builder().build().getPublishLatencyConsecutiveWindows(), 2);
     }
 
     @Test
+    public void testProducerRequestDefaultsToDisabled() throws Exception {
+        NewProducers request = Util.JSON_MAPPER.readValue("{\"id\":\"p\"}", NewProducers.class);
+        assertEquals(request.publishLatencyWindowSeconds(), 0);
+        NewProducers enabled = new NewProducers("p", "t", 1, 1, 1, 8, "pulsar", null, false, 60);
+        NewProducers restored = Util.JSON_MAPPER.readValue(Util.JSON_MAPPER.writeValueAsString(enabled),
+                NewProducers.class);
+        assertEquals(restored.publishLatencyWindowSeconds(), 60);
+    }
+
+    @Test
     public void testRoundTrip() throws Exception {
         Proof proof = Proof.builder().publishLatencyP99LimitMillis(15000)
-                .publishLatencyConsecutiveWindows(3).build();
+                .publishLatencyWindowSeconds(30).publishLatencyConsecutiveWindows(3).build();
         Proof restored = Util.JSON_MAPPER.readValue(Util.JSON_MAPPER.writeValueAsString(proof), Proof.class);
         assertEquals(restored.getPublishLatencyP99LimitMillis(), 15000L);
+        assertEquals(restored.getPublishLatencyWindowSeconds(), 30);
         assertEquals(restored.getPublishLatencyConsecutiveWindows(), 3);
     }
 }

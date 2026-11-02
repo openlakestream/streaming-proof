@@ -189,11 +189,15 @@ public class Proof {
     @Builder.Default
     private int maxStallSeconds = 0;
 
-    /** Windowed publish P99 limit in milliseconds; 0 disables the check. */
+    /** Fixed-window publish P99 limit in milliseconds; 0 disables the check. */
     @Builder.Default
     private long publishLatencyP99LimitMillis = 0;
 
-    /** Number of consecutive complete report windows above the publish P99 limit. */
+    /** Fixed publish latency window length in seconds, independent of chart sampling. */
+    @Builder.Default
+    private int publishLatencyWindowSeconds = 60;
+
+    /** Number of consecutive complete fixed windows above the publish P99 limit. */
     @Builder.Default
     private int publishLatencyConsecutiveWindows = 2;
 

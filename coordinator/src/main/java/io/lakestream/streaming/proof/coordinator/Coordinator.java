@@ -154,6 +154,9 @@ public class Coordinator {
         if (proof.getPublishLatencyP99LimitMillis() < 0) {
             throw new IllegalArgumentException("Publish latency P99 limit must be 0 or greater.");
         }
+        if (proof.getPublishLatencyWindowSeconds() < 1) {
+            throw new IllegalArgumentException("Publish latency window seconds must be at least 1.");
+        }
         if (proof.getPublishLatencyConsecutiveWindows() < 1) {
             throw new IllegalArgumentException("Publish latency consecutive windows must be at least 1.");
         }

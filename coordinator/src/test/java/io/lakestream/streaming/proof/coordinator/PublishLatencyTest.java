@@ -13,6 +13,7 @@
  */
 package io.lakestream.streaming.proof.coordinator;
 
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
@@ -98,40 +99,90 @@ public class PublishLatencyTest {
     }
 
     @Test
-    public void testUsesWindowedP99AndIgnoresRepeatedOrPartialReads() throws Exception {
+    public void testFixedBucketsIgnoreChartSamplingAndDuplicateReads() throws Exception {
         ProofTask task = newTask(15000, 2);
         Proof proof = task.getProof();
         proof.setCheckPointInterval(5);
-        proof.setTimeSeriesInterval(60);
+        proof.setTimeSeriesInterval(600);
         WorkerHttpClient client = mock(WorkerHttpClient.class);
-        ProofWorkerMetricsSnapshot slow = new ProofWorkerMetricsSnapshot(
-                1, 1, 1, 0, 1, 1,
-                new LatencyMetricSnapshot(1, 16000, 16000, List.of(16000L)), null);
-        // A fast cumulative P99 must not hide slow report windows.
-        doReturn(CompletableFuture.completedFuture(new ProofWorkerMetricsSnapshot(
+        LatencyMetricSnapshot slow = new LatencyMetricSnapshot(1, 16000, 16000, List.of(16000L));
+        ProofWorkerMetricsSnapshot fast = new ProofWorkerMetricsSnapshot(
                 10000, 10000, 10000, 0, 10000, 10000,
-                new LatencyMetricSnapshot(10000, 10000, 16000, List.of(1L)), null)))
-                .when(client).metrics(anyString());
-        doReturn(CompletableFuture.completedFuture(slow)).when(client).metricsWindowed(anyString());
+                new LatencyMetricSnapshot(10000, 10000, 16000, List.of(1L)), null);
+        doReturn(CompletableFuture.completedFuture(fast)).when(client).metrics(anyString());
+        doReturn(CompletableFuture.completedFuture(fast)).when(client).metricsWindowed(anyString());
+        doReturn(CompletableFuture.completedFuture(slow)).when(client).publishLatencyWindow(anyString(), anyLong());
         task.getClients().add(client);
-        Method record = ProofTask.class.getDeclaredMethod("recordTimeSeriesPoint");
-        record.setAccessible(true);
         try {
-            proof.setStartTime(LocalDateTime.now().minusSeconds(5).toString());
-            record.invoke(task); // Startup partial window.
-            record.invoke(task); // Same timestamp must not count again.
+            Method schedule = ProofTask.class.getDeclaredMethod("schedulePublishLatencyChecks");
+            schedule.setAccessible(true);
+            schedule.invoke(task);
+            long startupWindow = task.getLastPublishLatencyWindowId();
+            task.collectPublishLatencyWindow(startupWindow); // Partial startup bucket is excluded.
             assertEquals(task.getReport().status(), "passed");
-            proof.setStartTime(LocalDateTime.now().minusSeconds(65).toString());
-            record.invoke(task); // First full window.
+            task.collectPublishLatencyWindow(startupWindow + 1);
+            task.collectPublishLatencyWindow(startupWindow + 1); // Read is idempotent.
             assertEquals(task.getReport().status(), "passed");
-            proof.setStartTime(LocalDateTime.now().minusSeconds(80).toString());
-            record.invoke(task); // Final partial window.
-            assertEquals(task.getReport().status(), "passed");
-            proof.setStartTime(LocalDateTime.now().minusSeconds(125).toString());
-            record.invoke(task); // Second full window.
+            proof.setStartTime(LocalDateTime.now().minusSeconds(700).toString());
+            Method chart = ProofTask.class.getDeclaredMethod("recordTimeSeriesPoint");
+            chart.setAccessible(true);
+            chart.invoke(task); // A fast chart window must not reset the fixed-window streak.
+            proof.setTimeSeriesInterval(3600);
+            task.collectPublishLatencyWindow(startupWindow + 2);
             assertEquals(task.getReport().status(), "failed");
             assertEquals(task.getReport().performanceSummary().publishLatency().p99(), 1.0d);
         } finally {
+            task.getPublishLatencyExecutor().shutdownNow();
+            task.getExecutor().shutdownNow();
+        }
+    }
+
+    @Test
+    public void testMissingBucketBreaksConsecutiveWindows() throws Exception {
+        ProofTask task = newTask(15000, 2);
+        WorkerHttpClient client = mock(WorkerHttpClient.class);
+        LatencyMetricSnapshot slow = new LatencyMetricSnapshot(1, 16000, 16000, List.of(16000L));
+        doReturn(CompletableFuture.completedFuture(slow)).when(client).publishLatencyWindow(anyString(), anyLong());
+        task.getClients().add(client);
+        try {
+            Method schedule = ProofTask.class.getDeclaredMethod("schedulePublishLatencyChecks");
+            schedule.setAccessible(true);
+            schedule.invoke(task);
+            long startupWindow = task.getLastPublishLatencyWindowId();
+            task.collectPublishLatencyWindow(startupWindow + 1);
+            task.collectPublishLatencyWindow(startupWindow + 3); // One full window was missed.
+            assertEquals(task.getPublishLatencyFailureReason(), null);
+            task.collectPublishLatencyWindow(startupWindow + 4);
+            assertTrue(task.getPublishLatencyFailureReason().contains("2 consecutive fixed windows"));
+        } finally {
+            task.getPublishLatencyExecutor().shutdownNow();
+            task.getExecutor().shutdownNow();
+        }
+    }
+
+    @Test
+    public void testUnavailableWorkerBreaksStreak() throws Exception {
+        ProofTask task = newTask(15000, 2);
+        WorkerHttpClient client = mock(WorkerHttpClient.class);
+        LatencyMetricSnapshot slow = new LatencyMetricSnapshot(1, 16000, 16000, List.of(16000L));
+        CompletableFuture<LatencyMetricSnapshot> failed = CompletableFuture.failedFuture(
+                new IllegalStateException("worker unavailable"));
+        doReturn(CompletableFuture.completedFuture(slow), failed, CompletableFuture.completedFuture(slow))
+                .when(client).publishLatencyWindow(anyString(), anyLong());
+        task.getClients().add(client);
+        try {
+            Method schedule = ProofTask.class.getDeclaredMethod("schedulePublishLatencyChecks");
+            schedule.setAccessible(true);
+            schedule.invoke(task);
+            long startupWindow = task.getLastPublishLatencyWindowId();
+            task.collectPublishLatencyWindow(startupWindow + 1);
+            task.collectPublishLatencyWindow(startupWindow + 2);
+            task.collectPublishLatencyWindow(startupWindow + 3);
+            assertEquals(task.getConsecutiveSlowPublishWindows(), 1);
+            // Avoid an unrelated report read through the mocked worker.
+            assertEquals(task.getPublishLatencyFailureReason(), null);
+        } finally {
+            task.getPublishLatencyExecutor().shutdownNow();
             task.getExecutor().shutdownNow();
         }
     }
@@ -169,6 +220,16 @@ public class PublishLatencyTest {
                 .publishLatencyP99LimitMillis(limit).publishLatencyConsecutiveWindows(consecutive).build();
         assertEquals(expectThrows(IllegalArgumentException.class, () -> coordinator.createProof(proof)).getMessage(),
                 message);
+    }
+
+    @Test
+    public void testRejectsInvalidFixedWindow() {
+        Coordinator coordinator = new Coordinator();
+        coordinator.updateConfigs(new Configs(Map.of(), Map.of("test", new Driver("pulsar", Map.of(), null))));
+        Proof proof = Proof.builder().driver("test").topic("t").features(List.of("at_least_once"))
+                .publishLatencyWindowSeconds(0).build();
+        assertEquals(expectThrows(IllegalArgumentException.class, () -> coordinator.createProof(proof)).getMessage(),
+                "Publish latency window seconds must be at least 1.");
     }
 
     private static ProofTask newTask(long limit, int consecutive) {

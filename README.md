@@ -88,7 +88,7 @@ The check is **opt-in**: `maxStallSeconds` defaults to `0`, which disables it en
 **Detecting sustained publish latency**
 
 Set `publishLatencyP99LimitMillis` to fail a completed run after consecutive
-report windows exceed a publish latency P99 limit:
+fixed windows exceed a publish latency P99 limit:
 
 ```json
 {
@@ -97,6 +97,7 @@ report windows exceed a publish latency P99 limit:
   "features": ["at_least_once", "ordering"],
   "topic": "orders",
   "publishLatencyP99LimitMillis": 15000,
+  "publishLatencyWindowSeconds": 60,
   "publishLatencyConsecutiveWindows": 2
 }
 ```
@@ -108,13 +109,19 @@ remains failed even after recovery, with the limit and observed P99 in the resul
 reason. Correctness and verification-stall failures retain precedence, and running
 or manually stopped runs retain their existing statuses.
 
-This reuses the chart's non-overlapping report windows, not the cumulative P99
-shown in the overview. `timeSeriesInterval` controls the interval when set,
-rounded up to a checkpoint multiple and never below `checkPointInterval`.
-Otherwise the interval is derived from `duration / maxTimeSeriesPoints` and rounded
-up to a checkpoint multiple. Defaults (8 hours, 481 points, 60-second checkpoints)
-produce approximately 60-second windows; collection delays can make them longer.
-Startup and final partial windows do not count toward the streak.
+`publishLatencyWindowSeconds` defaults to `60` and must be positive. Workers
+assign acknowledged sends to UTC-aligned, non-overlapping time buckets (for
+example, 12:00:00–12:01:00), using synchronized machine clocks. A dedicated
+coordinator timer evaluates closed buckets, independently of checkpointing,
+`timeSeriesInterval`, test duration, and chart reads. Reading a bucket does not
+reset its samples or affect chart metrics. Startup and final partial buckets do
+not count. Thus the example fails after two consecutive full 60-second buckets
+have P99 above 15 seconds, even if the chart samples only once every 10 minutes.
+
+Workers retain the latest four nonempty buckets with bounded reservoir samples.
+If collection misses buckets or a worker cannot supply its bucket, the
+consecutive streak resets; delayed reads do not combine time windows. Coordinator
+and workers must both be upgraded to use the dedicated bucket endpoint.
 
 P99 uses the existing bounded latency samples of acknowledged sends. This does
 not cancel sends or change client timeouts. Failed or unfinished sends do not

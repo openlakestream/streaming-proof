@@ -182,6 +182,9 @@ public class ProofTask {
     private volatile ProofPerformanceSummary latestPerformanceSummary;
     private volatile List<ProofClusterTarget> clusterTargetsSnapshot;
     private volatile String startFailureReason;
+    private final ScheduledExecutorService publishLatencyExecutor = Executors.newSingleThreadScheduledExecutor();
+    private volatile boolean publishLatencyChecksStarted;
+    private long lastPublishLatencyWindowId;
     private int consecutiveSlowPublishWindows;
     private volatile String publishLatencyFailureReason;
 
@@ -256,6 +259,7 @@ public class ProofTask {
             String formattedTimestamp = DateTimeFormatter.ISO_LOCAL_DATE_TIME
                     .format(LocalDateTime.now());
             proof.setStartTime(formattedTimestamp);
+            schedulePublishLatencyChecks();
             scheduleCheckpoint();
             log.info("Started the proof {}", proof);
         } catch (Exception e) {
@@ -266,6 +270,7 @@ public class ProofTask {
 
     private void handleStartFailure(Exception error) {
         startFailureReason = rootCauseMessage(error);
+        publishLatencyExecutor.shutdownNow();
         // Ensure a start time is recorded even when startup fails before
         // setStartTime() is reached, so failed runs still group/sort correctly.
         if (proof.getStartTime() == null || proof.getStartTime().isBlank()) {
@@ -527,7 +532,8 @@ public class ProofTask {
                     proof.getMessageSize(),
                     driverName,
                     configs.drivers().get(driverName),
-                    proof.getFeatures().contains("exactly_once")
+                    proof.getFeatures().contains("exactly_once"),
+                    proof.getPublishLatencyP99LimitMillis() > 0 ? proof.getPublishLatencyWindowSeconds() : 0
             );
             try {
                 clients.get(i).startProducers(record).join();
@@ -1413,7 +1419,58 @@ public class ProofTask {
         return sortedSamples.get(index);
     }
 
-    /** Evaluates only complete report windows; a breached result survives recovery. */
+    private void schedulePublishLatencyChecks() {
+        if (proof.getPublishLatencyP99LimitMillis() <= 0) {
+            return;
+        }
+        long windowMillis = TimeUnit.SECONDS.toMillis(proof.getPublishLatencyWindowSeconds());
+        long now = System.currentTimeMillis();
+        // Exclude the startup bucket, which may contain less than a full window.
+        lastPublishLatencyWindowId = now / windowMillis;
+        publishLatencyChecksStarted = true;
+        long initialDelay = windowMillis - now % windowMillis + windowMillis;
+        publishLatencyExecutor.scheduleAtFixedRate(this::collectCompletedPublishLatencyWindow,
+                initialDelay, windowMillis, TimeUnit.MILLISECONDS);
+    }
+
+    private void collectCompletedPublishLatencyWindow() {
+        long windowMillis = TimeUnit.SECONDS.toMillis(proof.getPublishLatencyWindowSeconds());
+        collectPublishLatencyWindow(System.currentTimeMillis() / windowMillis - 1);
+    }
+
+    /** Reads the same immutable closed bucket from every worker. */
+    synchronized void collectPublishLatencyWindow(long windowId) {
+        if (!publishLatencyChecksStarted || windowId <= lastPublishLatencyWindowId) {
+            return;
+        }
+        if (windowId != lastPublishLatencyWindowId + 1) {
+            consecutiveSlowPublishWindows = 0;
+        }
+        lastPublishLatencyWindowId = windowId;
+        try {
+            LatencyMetricSnapshot merged = null;
+            int producerWorkers = Math.min(clients.size(), Math.min(proof.getProducers(),
+                    Math.min(proof.getKeys(), proof.getMsgRate())));
+            for (WorkerHttpClient client : clients.subList(0, producerWorkers)) {
+                LatencyMetricSnapshot snapshot = client.publishLatencyWindow(proof.getId(), windowId)
+                        .get(5, TimeUnit.SECONDS);
+                if (snapshot == null) {
+                    throw new IllegalStateException("Worker returned no publish latency bucket");
+                }
+                merged = mergeLatencySnapshots(merged, snapshot);
+            }
+            recordPublishLatencyWindow(buildLatencySummary(merged));
+        } catch (Exception e) {
+            // An unavailable worker cannot establish a consecutive full-cluster breach.
+            consecutiveSlowPublishWindows = 0;
+            log.warn("Failed to collect fixed publish latency window {} for proof {}", windowId, proof.getId(), e);
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    /** Evaluates only complete fixed windows; a breached result survives recovery. */
     void recordPublishLatencyWindow(LatencySummary latency) {
         if (proof.getPublishLatencyP99LimitMillis() <= 0 || publishLatencyFailureReason != null) {
             return;
@@ -1425,8 +1482,8 @@ public class ProofTask {
         consecutiveSlowPublishWindows++;
         if (consecutiveSlowPublishWindows >= proof.getPublishLatencyConsecutiveWindows()) {
             publishLatencyFailureReason = "Publish latency P99 exceeded " + proof.getPublishLatencyP99LimitMillis()
-                    + "ms for " + consecutiveSlowPublishWindows + " consecutive report windows; last P99 was "
-                    + latency.p99() + "ms.";
+                    + "ms for " + consecutiveSlowPublishWindows + " consecutive fixed windows ("
+                    + proof.getPublishLatencyWindowSeconds() + "s each); last P99 was " + latency.p99() + "ms.";
         }
     }
 
@@ -1486,11 +1543,6 @@ public class ProofTask {
                 (windowedMetrics.receivedBytes() - prevConsumedBytes) / windowDuration;
         LatencySummary windowedPublishLatency = buildLatencySummary(windowedMetrics.publishLatency());
         LatencySummary windowedE2eLatency = buildLatencySummary(windowedMetrics.endToEndLatency());
-        // A startup or final partial window must not count as a complete window.
-        if (deltaSeconds >= sampleInterval) {
-            recordPublishLatencyWindow(windowedPublishLatency);
-        }
-
         timeSeries.add(buildTimeSeriesPoint(
                 performanceSummary, summary,
                 windowedPublishRate, windowedConsumeRate, windowedPublishErrorRate,
@@ -1580,6 +1632,10 @@ public class ProofTask {
     public void stop() {
         if (!stopping.compareAndSet(false, true)) {
             return;
+        }
+        publishLatencyExecutor.shutdownNow();
+        if (publishLatencyChecksStarted) {
+            collectCompletedPublishLatencyWindow();
         }
         freezeClusterTargetsSnapshot();
 
