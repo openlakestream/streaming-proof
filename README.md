@@ -85,6 +85,42 @@ To make a long stall actually fail the run, set `maxStallSeconds` on the proof w
 
 The check is **opt-in**: `maxStallSeconds` defaults to `0`, which disables it entirely. With no value set (or `0`), the stall metrics are still shown but never affect the pass/fail result.
 
+**Detecting sustained publish latency**
+
+Set `publishLatencyP99LimitMillis` to fail a completed run after consecutive
+report windows exceed a publish latency P99 limit:
+
+```json
+{
+  "name": "pulsar-publish-latency",
+  "driver": "pulsar",
+  "features": ["at_least_once", "ordering"],
+  "topic": "orders",
+  "publishLatencyP99LimitMillis": 15000,
+  "publishLatencyConsecutiveWindows": 2
+}
+```
+
+The limit defaults to `0` (disabled); the consecutive-window count defaults to
+`2` and must be positive. A P99 equal to the limit is allowed. A healthy or empty
+window resets the streak. Once the required streak is reached, the final result
+remains failed even after recovery, with the limit and observed P99 in the result
+reason. Correctness and verification-stall failures retain precedence, and running
+or manually stopped runs retain their existing statuses.
+
+This reuses the chart's non-overlapping report windows, not the cumulative P99
+shown in the overview. `timeSeriesInterval` controls the interval when set,
+rounded up to a checkpoint multiple and never below `checkPointInterval`.
+Otherwise the interval is derived from `duration / maxTimeSeriesPoints` and rounded
+up to a checkpoint multiple. Defaults (8 hours, 481 points, 60-second checkpoints)
+produce approximately 60-second windows; collection delays can make them longer.
+Startup and final partial windows do not count toward the streak.
+
+P99 uses the existing bounded latency samples of acknowledged sends. This does
+not cancel sends or change client timeouts. Failed or unfinished sends do not
+contribute latency samples; use error and verification-stall metrics alongside
+this check.
+
 **Supported Streaming Systems**:
 - Apache Kafka, or any Kafka API compatible systems
 - Apache Pulsar (Failover, Key_Shared, Shared subscriptions, and Pulsar 5.0 scalable topics)

@@ -613,6 +613,8 @@ function renderConfigSummary(proof, clusterTargets) {
     timeout:    proof.timeout != null ? `${proof.timeout}s` : "?",
     finalWait: proof.finalWaitSeconds != null ? `${proof.finalWaitSeconds}s` : "—",
     maxStall:  proof.maxStallSeconds ? `${proof.maxStallSeconds}s` : "—",
+    publishP99Limit: proof.publishLatencyP99LimitMillis > 0
+      ? `${proof.publishLatencyP99LimitMillis}ms × ${proof.publishLatencyConsecutiveWindows ?? 2} windows` : "—",
     features:   Array.isArray(proof.features) ? proof.features : [],
   };
 
@@ -656,6 +658,8 @@ function renderConfigSummary(proof, clusterTargets) {
           final wait <span class="cfg-compact-em">${escapeHtml(p.finalWait)}</span>
           <span class="cfg-compact-dot"></span>
           max stall <span class="cfg-compact-em">${escapeHtml(p.maxStall)}</span>
+          <span class="cfg-compact-dot"></span>
+          publish P99 limit <span class="cfg-compact-em">${escapeHtml(p.publishP99Limit)}</span>
         </span>
       </div>
       <div class="cfg-compact-item cfg-compact-item-guarantees">

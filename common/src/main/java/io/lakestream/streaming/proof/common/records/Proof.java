@@ -189,6 +189,14 @@ public class Proof {
     @Builder.Default
     private int maxStallSeconds = 0;
 
+    /** Windowed publish P99 limit in milliseconds; 0 disables the check. */
+    @Builder.Default
+    private long publishLatencyP99LimitMillis = 0;
+
+    /** Number of consecutive complete report windows above the publish P99 limit. */
+    @Builder.Default
+    private int publishLatencyConsecutiveWindows = 2;
+
     /** Webhook configuration for notifications */
     private WebhookConfig webhookConfig;
 

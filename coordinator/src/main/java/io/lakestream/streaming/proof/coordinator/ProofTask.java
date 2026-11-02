@@ -182,6 +182,8 @@ public class ProofTask {
     private volatile ProofPerformanceSummary latestPerformanceSummary;
     private volatile List<ProofClusterTarget> clusterTargetsSnapshot;
     private volatile String startFailureReason;
+    private int consecutiveSlowPublishWindows;
+    private volatile String publishLatencyFailureReason;
 
     // --- Windowed rate tracking ---
     private long prevPublishedMessages;
@@ -245,6 +247,8 @@ public class ProofTask {
         lastVerifiedChangeMillis = System.currentTimeMillis();
         completionMillis = 0;
         maxVerifiedStallMillis = 0;
+        consecutiveSlowPublishWindows = 0;
+        publishLatencyFailureReason = null;
         try {
             createProofTopics();
             startConsumers();
@@ -1201,6 +1205,9 @@ public class ProofTask {
                 && summary.maxVerifiedStallSeconds() > proof.getMaxStallSeconds()) {
             return "failed";
         }
+        if (publishLatencyFailureReason != null) {
+            return "failed";
+        }
         return "passed";
     }
 
@@ -1232,6 +1239,9 @@ public class ProofTask {
                 && summary.maxVerifiedStallSeconds() > proof.getMaxStallSeconds()) {
             return "Verification stalled for " + summary.maxVerifiedStallSeconds()
                     + "s, exceeding the configured limit of " + proof.getMaxStallSeconds() + "s.";
+        }
+        if (publishLatencyFailureReason != null) {
+            return publishLatencyFailureReason;
         }
         if ("passed".equals(resultStatus)) {
             return "The run completed without missed or out-of-order messages.";
@@ -1403,6 +1413,23 @@ public class ProofTask {
         return sortedSamples.get(index);
     }
 
+    /** Evaluates only complete report windows; a breached result survives recovery. */
+    void recordPublishLatencyWindow(LatencySummary latency) {
+        if (proof.getPublishLatencyP99LimitMillis() <= 0 || publishLatencyFailureReason != null) {
+            return;
+        }
+        if (latency == null || latency.count() <= 0 || latency.p99() <= proof.getPublishLatencyP99LimitMillis()) {
+            consecutiveSlowPublishWindows = 0;
+            return;
+        }
+        consecutiveSlowPublishWindows++;
+        if (consecutiveSlowPublishWindows >= proof.getPublishLatencyConsecutiveWindows()) {
+            publishLatencyFailureReason = "Publish latency P99 exceeded " + proof.getPublishLatencyP99LimitMillis()
+                    + "ms for " + consecutiveSlowPublishWindows + " consecutive report windows; last P99 was "
+                    + latency.p99() + "ms.";
+        }
+    }
+
     private long timeSeriesSampleInterval() {
         long checkpoint = proof.getCheckPointInterval();
         if (checkpoint <= 0) {
@@ -1459,6 +1486,10 @@ public class ProofTask {
                 (windowedMetrics.receivedBytes() - prevConsumedBytes) / windowDuration;
         LatencySummary windowedPublishLatency = buildLatencySummary(windowedMetrics.publishLatency());
         LatencySummary windowedE2eLatency = buildLatencySummary(windowedMetrics.endToEndLatency());
+        // A startup or final partial window must not count as a complete window.
+        if (deltaSeconds >= sampleInterval) {
+            recordPublishLatencyWindow(windowedPublishLatency);
+        }
 
         timeSeries.add(buildTimeSeriesPoint(
                 performanceSummary, summary,

@@ -151,6 +151,12 @@ public class Coordinator {
         if (proof.getFinalWaitSeconds() != null && proof.getFinalWaitSeconds() < 0) {
             throw new IllegalArgumentException("Final wait seconds must be 0 or greater.");
         }
+        if (proof.getPublishLatencyP99LimitMillis() < 0) {
+            throw new IllegalArgumentException("Publish latency P99 limit must be 0 or greater.");
+        }
+        if (proof.getPublishLatencyConsecutiveWindows() < 1) {
+            throw new IllegalArgumentException("Publish latency consecutive windows must be at least 1.");
+        }
         if (proof.getProducers() < 1) {
             throw new IllegalArgumentException("Producers must be at least 1.");
         }
