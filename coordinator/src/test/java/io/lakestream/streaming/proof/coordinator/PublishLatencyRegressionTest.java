@@ -174,7 +174,7 @@ public class PublishLatencyRegressionTest {
 
     private static ProofTask newTask() {
         Proof proof = Proof.builder().id("p").topic("t").features(List.of("at_least_once"))
-                .finalWaitSeconds(0).publishLatencyP99LimitMillis(15000).build();
+                .finalWaitSeconds(0).publishLatencyP99LimitMillis(15000).publishLatencyConsecutiveWindows(2).build();
         return spy(new ProofTask(proof, new Configs(Map.of(), Map.of()), mock(ProofDriver.class)));
     }
 

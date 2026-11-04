@@ -614,7 +614,7 @@ function renderConfigSummary(proof, clusterTargets) {
     finalWait: proof.finalWaitSeconds != null ? `${proof.finalWaitSeconds}s` : "—",
     maxStall:  proof.maxStallSeconds ? `${proof.maxStallSeconds}s` : "—",
     publishP99Limit: proof.publishLatencyP99LimitMillis > 0
-      ? `${proof.publishLatencyP99LimitMillis}ms × ${proof.publishLatencyConsecutiveWindows ?? 2} windows (${proof.publishLatencyWindowSeconds ?? 60}s each)` : "—",
+      ? `${proof.publishLatencyP99LimitMillis}ms × ${proof.publishLatencyConsecutiveWindows ?? 3} windows (${proof.publishLatencyWindowSeconds ?? 60}s each)` : "—",
     features:   Array.isArray(proof.features) ? proof.features : [],
   };
 

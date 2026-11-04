@@ -25,9 +25,9 @@ public class ProofPublishLatencyConfigTest {
         assertEquals(proof.getPublishLatencyP99LimitMillis(), 0L);
         assertEquals(proof.getPublishLatencyWindowSeconds(), 60);
         assertEquals(Proof.builder().build().getPublishLatencyWindowSeconds(), 60);
-        assertEquals(proof.getPublishLatencyConsecutiveWindows(), 2);
+        assertEquals(proof.getPublishLatencyConsecutiveWindows(), 3);
         assertEquals(Proof.builder().build().getPublishLatencyP99LimitMillis(), 0L);
-        assertEquals(Proof.builder().build().getPublishLatencyConsecutiveWindows(), 2);
+        assertEquals(Proof.builder().build().getPublishLatencyConsecutiveWindows(), 3);
     }
 
     @Test
@@ -44,10 +44,10 @@ public class ProofPublishLatencyConfigTest {
     @Test
     public void testRoundTrip() throws Exception {
         Proof proof = Proof.builder().publishLatencyP99LimitMillis(15000)
-                .publishLatencyWindowSeconds(30).publishLatencyConsecutiveWindows(3).build();
+                .publishLatencyWindowSeconds(30).publishLatencyConsecutiveWindows(2).build();
         Proof restored = Util.JSON_MAPPER.readValue(Util.JSON_MAPPER.writeValueAsString(proof), Proof.class);
         assertEquals(restored.getPublishLatencyP99LimitMillis(), 15000L);
         assertEquals(restored.getPublishLatencyWindowSeconds(), 30);
-        assertEquals(restored.getPublishLatencyConsecutiveWindows(), 3);
+        assertEquals(restored.getPublishLatencyConsecutiveWindows(), 2);
     }
 }

@@ -199,7 +199,7 @@ public class Proof {
 
     /** Number of consecutive complete fixed windows above the publish P99 limit. */
     @Builder.Default
-    private int publishLatencyConsecutiveWindows = 2;
+    private int publishLatencyConsecutiveWindows = 3;
 
     /** Webhook configuration for notifications */
     private WebhookConfig webhookConfig;
