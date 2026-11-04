@@ -13,35 +13,41 @@
  */
 package io.lakestream.streaming.proof.worker;
 
-import io.lakestream.streaming.proof.common.records.LatencyMetricSnapshot;
-import java.util.List;
+import io.lakestream.streaming.proof.common.records.PublishLatencyWindowSnapshot;
 import java.util.NavigableMap;
 import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
 
-/** UTC-aligned tumbling buckets, independent of when metrics are read. */
+/** UTC-aligned exact acknowledgment counters, independent of when metrics are read. */
 final class FixedWindowLatencyRecorder {
     private static final int RETAINED_WINDOWS = 4;
     private final long windowMillis;
-    private final NavigableMap<Long, LatencyRecorder> windows = new TreeMap<>();
+    private final long limitMillis;
+    private final NavigableMap<Long, long[]> windows = new TreeMap<>();
 
-    FixedWindowLatencyRecorder(int windowSeconds) {
-        if (windowSeconds <= 0) {
-            throw new IllegalArgumentException("Window seconds must be positive.");
+    FixedWindowLatencyRecorder(int windowSeconds, long limitMillis) {
+        if (windowSeconds <= 0 || limitMillis <= 0) {
+            throw new IllegalArgumentException("Window seconds and threshold must be positive.");
         }
         windowMillis = TimeUnit.SECONDS.toMillis(windowSeconds);
+        this.limitMillis = limitMillis;
     }
 
     synchronized void record(long latencyMillis, long acknowledgedAtMillis) {
         long windowId = acknowledgedAtMillis / windowMillis;
-        windows.computeIfAbsent(windowId, ignored -> new LatencyRecorder()).record(latencyMillis);
+        long[] counts = windows.computeIfAbsent(windowId, ignored -> new long[2]);
+        counts[0]++;
+        if (latencyMillis > limitMillis) {
+            counts[1]++;
+        }
         while (windows.size() > RETAINED_WINDOWS) {
             windows.pollFirstEntry();
         }
     }
 
-    synchronized LatencyMetricSnapshot snapshot(long windowId) {
-        LatencyRecorder recorder = windows.get(windowId);
-        return recorder == null ? new LatencyMetricSnapshot(0, 0, 0, List.of()) : recorder.snapshot();
+    synchronized PublishLatencyWindowSnapshot snapshot(long windowId) {
+        long[] counts = windows.get(windowId);
+        return counts == null ? new PublishLatencyWindowSnapshot(0, 0, limitMillis)
+                : new PublishLatencyWindowSnapshot(counts[0], counts[1], limitMillis);
     }
 }

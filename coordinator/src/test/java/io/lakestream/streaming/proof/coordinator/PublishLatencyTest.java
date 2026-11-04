@@ -26,9 +26,9 @@ import io.lakestream.streaming.proof.common.WorkerHttpClient;
 import io.lakestream.streaming.proof.common.records.Configs;
 import io.lakestream.streaming.proof.common.records.Driver;
 import io.lakestream.streaming.proof.common.records.LatencyMetricSnapshot;
-import io.lakestream.streaming.proof.common.records.LatencySummary;
 import io.lakestream.streaming.proof.common.records.Proof;
 import io.lakestream.streaming.proof.common.records.ProofWorkerMetricsSnapshot;
+import io.lakestream.streaming.proof.common.records.PublishLatencyWindowSnapshot;
 import java.lang.reflect.Method;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -75,7 +75,7 @@ public class PublishLatencyTest {
         ProofTask task = newTask(15000, 2);
         try {
             task.recordPublishLatencyWindow(latency(16000));
-            task.recordPublishLatencyWindow(new LatencySummary(0, 0, 0, 0, 0, 0));
+            task.recordPublishLatencyWindow(new PublishLatencyWindowSnapshot(0, 0, 15000));
             task.recordPublishLatencyWindow(latency(16000));
             assertEquals(task.getReport().status(), "passed");
         } finally {
@@ -105,7 +105,7 @@ public class PublishLatencyTest {
         proof.setCheckPointInterval(5);
         proof.setTimeSeriesInterval(600);
         WorkerHttpClient client = mock(WorkerHttpClient.class);
-        LatencyMetricSnapshot slow = new LatencyMetricSnapshot(1, 16000, 16000, List.of(16000L));
+        PublishLatencyWindowSnapshot slow = new PublishLatencyWindowSnapshot(100, 100, 15000);
         ProofWorkerMetricsSnapshot fast = new ProofWorkerMetricsSnapshot(
                 10000, 10000, 10000, 0, 10000, 10000,
                 new LatencyMetricSnapshot(10000, 10000, 16000, List.of(1L)), null);
@@ -141,7 +141,7 @@ public class PublishLatencyTest {
     public void testMissingBucketBreaksConsecutiveWindows() throws Exception {
         ProofTask task = newTask(15000, 2);
         WorkerHttpClient client = mock(WorkerHttpClient.class);
-        LatencyMetricSnapshot slow = new LatencyMetricSnapshot(1, 16000, 16000, List.of(16000L));
+        PublishLatencyWindowSnapshot slow = new PublishLatencyWindowSnapshot(100, 100, 15000);
         doReturn(CompletableFuture.completedFuture(slow)).when(client).publishLatencyWindow(anyString(), anyLong());
         task.getClients().add(client);
         try {
@@ -164,8 +164,8 @@ public class PublishLatencyTest {
     public void testUnavailableWorkerBreaksStreak() throws Exception {
         ProofTask task = newTask(15000, 2);
         WorkerHttpClient client = mock(WorkerHttpClient.class);
-        LatencyMetricSnapshot slow = new LatencyMetricSnapshot(1, 16000, 16000, List.of(16000L));
-        CompletableFuture<LatencyMetricSnapshot> failed = CompletableFuture.failedFuture(
+        PublishLatencyWindowSnapshot slow = new PublishLatencyWindowSnapshot(100, 100, 15000);
+        CompletableFuture<PublishLatencyWindowSnapshot> failed = CompletableFuture.failedFuture(
                 new IllegalStateException("worker unavailable"));
         doReturn(CompletableFuture.completedFuture(slow), failed, CompletableFuture.completedFuture(slow))
                 .when(client).publishLatencyWindow(anyString(), anyLong());
@@ -238,7 +238,7 @@ public class PublishLatencyTest {
         return new ProofTask(proof, new Configs(Map.of(), Map.of()), mock(ProofDriver.class));
     }
 
-    private static LatencySummary latency(long p99) {
-        return new LatencySummary(100, 1, 1, 1, p99, p99);
+    private static PublishLatencyWindowSnapshot latency(long p99) {
+        return new PublishLatencyWindowSnapshot(100, p99 > 15000 ? 100 : 0, 15000);
     }
 }

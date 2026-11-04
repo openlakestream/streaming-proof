@@ -105,28 +105,35 @@ fixed windows exceed a publish latency P99 limit:
 The limit defaults to `0` (disabled); the consecutive-window count defaults to
 `2` and must be positive. A P99 equal to the limit is allowed. A healthy or empty
 window resets the streak. Once the required streak is reached, the final result
-remains failed even after recovery, with the limit and observed P99 in the result
-reason. Correctness and verification-stall failures retain precedence, and running
-or manually stopped runs retain their existing statuses.
+remains failed even after recovery, with the limit and exact over-limit/total
+acknowledgment counts in the result reason. Correctness and verification-stall
+failures retain precedence, and running or manually stopped runs retain their
+existing statuses.
 
 `publishLatencyWindowSeconds` defaults to `60` and must be positive. Workers
 assign acknowledged sends to UTC-aligned, non-overlapping time buckets (for
 example, 12:00:00–12:01:00), using synchronized machine clocks. A dedicated
 coordinator timer evaluates closed buckets, independently of checkpointing,
 `timeSeriesInterval`, test duration, and chart reads. Reading a bucket does not
-reset its samples or affect chart metrics. Startup and final partial buckets do
+reset its counters or affect chart metrics. Startup and final partial buckets do
 not count. Thus the example fails after two consecutive full 60-second buckets
 have P99 above 15 seconds, even if the chart samples only once every 10 minutes.
 
-Workers retain the latest four nonempty buckets with bounded reservoir samples.
+Workers retain exact total and over-limit acknowledgment counts in the latest
+four nonempty buckets.
 If collection misses buckets or a worker cannot supply its bucket, the
 consecutive streak resets; delayed reads do not combine time windows. Coordinator
 and workers must both be upgraded to use the dedicated bucket endpoint.
 
-P99 uses the existing bounded latency samples of acknowledged sends. This does
-not cancel sends or change client timeouts. Failed or unfinished sends do not
-contribute latency samples; use error and verification-stall metrics alongside
-this check.
+The pass/fail decision uses exact counts across workers: nearest-rank P99 exceeds
+the limit precisely when the over-limit count is greater than `floor(total / 100)`.
+A worker with fewer acknowledgments therefore cannot be overrepresented by its
+retained samples. The chart's approximate percentile calculation is unchanged.
+This does not cancel sends or change client timeouts. Failed or unfinished sends
+do not contribute acknowledgment counts; use error and verification-stall metrics
+alongside this check. Normal shutdown lets in-flight collection finish before
+reading the final closed bucket; interrupted collection remains retryable without
+losing the preceding breach streak.
 
 **Supported Streaming Systems**:
 - Apache Kafka, or any Kafka API compatible systems

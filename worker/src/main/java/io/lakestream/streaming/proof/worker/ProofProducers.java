@@ -20,6 +20,7 @@ import io.lakestream.streaming.proof.common.records.LatencyMetricSnapshot;
 import io.lakestream.streaming.proof.common.records.NewProducers;
 import io.lakestream.streaming.proof.common.records.ProducerCheckpoint;
 import io.lakestream.streaming.proof.common.records.ProofWorkerMetricsSnapshot;
+import io.lakestream.streaming.proof.common.records.PublishLatencyWindowSnapshot;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -107,7 +108,9 @@ public class ProofProducers {
     public ProofProducers(NewProducers newProducers, ProofDriver driver) {
         this.newProducers = newProducers;
         this.fixedPublishLatencyWindows = newProducers.publishLatencyWindowSeconds() > 0
-                ? new FixedWindowLatencyRecorder(newProducers.publishLatencyWindowSeconds()) : null;
+                && newProducers.publishLatencyP99LimitMillis() > 0
+                ? new FixedWindowLatencyRecorder(newProducers.publishLatencyWindowSeconds(),
+                        newProducers.publishLatencyP99LimitMillis()) : null;
         this.driver = driver;
         this.tasks = new ArrayList<>(newProducers.producers());
         this.rateLimiter = new UniformRateLimiter(newProducers.msgRate());
@@ -184,7 +187,7 @@ public class ProofProducers {
         return checkpoint;
     }
 
-    public LatencyMetricSnapshot publishLatencyWindowSnapshot(long windowId) {
+    public PublishLatencyWindowSnapshot publishLatencyWindowSnapshot(long windowId) {
         return fixedPublishLatencyWindows == null ? null : fixedPublishLatencyWindows.snapshot(windowId);
     }
 

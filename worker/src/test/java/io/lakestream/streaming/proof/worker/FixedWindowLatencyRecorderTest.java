@@ -14,7 +14,6 @@
 package io.lakestream.streaming.proof.worker;
 
 import static org.testng.Assert.assertEquals;
-import static org.testng.Assert.assertTrue;
 
 import io.lakestream.streaming.proof.common.MessageMetadata;
 import io.lakestream.streaming.proof.common.ProofProducer;
@@ -25,14 +24,14 @@ import org.testng.annotations.Test;
 public class FixedWindowLatencyRecorderTest {
     @Test
     public void testExactBoundaryAndIdempotentReads() {
-        FixedWindowLatencyRecorder recorder = new FixedWindowLatencyRecorder(60);
+        FixedWindowLatencyRecorder recorder = new FixedWindowLatencyRecorder(60, 15000);
         recorder.record(100, 59999);
         recorder.record(16000, 60000);
         recorder.record(17000, 119999);
         recorder.record(200, 120000);
         assertEquals(recorder.snapshot(0).count(), 1L);
         assertEquals(recorder.snapshot(1).count(), 2L);
-        assertEquals(recorder.snapshot(1).maxMillis(), 17000L);
+        assertEquals(recorder.snapshot(1).overLimitCount(), 2L);
         assertEquals(recorder.snapshot(1), recorder.snapshot(1));
         assertEquals(recorder.snapshot(2).count(), 1L);
         assertEquals(recorder.snapshot(3).count(), 0L);
@@ -40,30 +39,30 @@ public class FixedWindowLatencyRecorderTest {
 
     @Test
     public void testDelayedReadsDoNotCombineBucketsAndRetentionIsBounded() {
-        FixedWindowLatencyRecorder recorder = new FixedWindowLatencyRecorder(1);
+        FixedWindowLatencyRecorder recorder = new FixedWindowLatencyRecorder(1, 5);
         for (int i = 0; i < 10; i++) {
             recorder.record(i, i * 1000L);
         }
         assertEquals(recorder.snapshot(5).count(), 0L);
         for (int i = 6; i < 10; i++) {
             assertEquals(recorder.snapshot(i).count(), 1L);
-            assertEquals(recorder.snapshot(i).maxMillis(), (long) i);
+            assertEquals(recorder.snapshot(i).overLimitCount(), 1L);
         }
     }
 
     @Test
-    public void testSamplesRemainBoundedWithinABucket() {
-        FixedWindowLatencyRecorder recorder = new FixedWindowLatencyRecorder(60);
+    public void testExactCountsDoNotDependOnReservoirSize() {
+        FixedWindowLatencyRecorder recorder = new FixedWindowLatencyRecorder(60, 15000);
         for (int i = 0; i < 10000; i++) {
-            recorder.record(i, 1000);
+            recorder.record(i % 10 == 0 ? 16000 : 15000, 1000);
         }
         assertEquals(recorder.snapshot(0).count(), 10000L);
-        assertTrue(recorder.snapshot(0).samplesMillis().size() <= 4096);
+        assertEquals(recorder.snapshot(0).overLimitCount(), 1000L);
     }
 
     @Test
     public void testChartReadDoesNotResetFixedSamples() throws Exception {
-        FixedWindowLatencyRecorder recorder = new FixedWindowLatencyRecorder(60);
+        FixedWindowLatencyRecorder recorder = new FixedWindowLatencyRecorder(60, 15000);
         ProofProducer producer = new ProofProducer() {
             @Override
             public CompletableFuture<MessageMetadata> sendAsync(String key, long value) {

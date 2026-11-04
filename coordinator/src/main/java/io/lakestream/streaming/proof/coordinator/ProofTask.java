@@ -37,6 +37,7 @@ import io.lakestream.streaming.proof.common.records.ProofReport;
 import io.lakestream.streaming.proof.common.records.ProofSummary;
 import io.lakestream.streaming.proof.common.records.ProofTimeSeriesPoint;
 import io.lakestream.streaming.proof.common.records.ProofWorkerMetricsSnapshot;
+import io.lakestream.streaming.proof.common.records.PublishLatencyWindowSnapshot;
 import io.lakestream.streaming.proof.worker.DriverCache;
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -533,7 +534,8 @@ public class ProofTask {
                     driverName,
                     configs.drivers().get(driverName),
                     proof.getFeatures().contains("exactly_once"),
-                    proof.getPublishLatencyP99LimitMillis() > 0 ? proof.getPublishLatencyWindowSeconds() : 0
+                    proof.getPublishLatencyP99LimitMillis() > 0 ? proof.getPublishLatencyWindowSeconds() : 0,
+                    proof.getPublishLatencyP99LimitMillis()
             );
             try {
                 clients.get(i).startProducers(record).join();
@@ -1446,36 +1448,42 @@ public class ProofTask {
         if (windowId != lastPublishLatencyWindowId + 1) {
             consecutiveSlowPublishWindows = 0;
         }
-        lastPublishLatencyWindowId = windowId;
         try {
-            LatencyMetricSnapshot merged = null;
+            long count = 0;
+            long overLimitCount = 0;
             int producerWorkers = Math.min(clients.size(), Math.min(proof.getProducers(),
                     Math.min(proof.getKeys(), proof.getMsgRate())));
             for (WorkerHttpClient client : clients.subList(0, producerWorkers)) {
-                LatencyMetricSnapshot snapshot = client.publishLatencyWindow(proof.getId(), windowId)
+                PublishLatencyWindowSnapshot snapshot = client.publishLatencyWindow(proof.getId(), windowId)
                         .get(5, TimeUnit.SECONDS);
-                if (snapshot == null) {
-                    throw new IllegalStateException("Worker returned no publish latency bucket");
+                if (snapshot == null || snapshot.limitMillis() != proof.getPublishLatencyP99LimitMillis()) {
+                    throw new IllegalStateException("Worker returned no matching publish latency threshold counts");
                 }
-                merged = mergeLatencySnapshots(merged, snapshot);
+                count = Math.addExact(count, snapshot.count());
+                overLimitCount = Math.addExact(overLimitCount, snapshot.overLimitCount());
             }
-            recordPublishLatencyWindow(buildLatencySummary(merged));
+            recordPublishLatencyWindow(new PublishLatencyWindowSnapshot(
+                    count, overLimitCount, proof.getPublishLatencyP99LimitMillis()));
+            lastPublishLatencyWindowId = windowId;
         } catch (Exception e) {
             // An unavailable worker cannot establish a consecutive full-cluster breach.
-            consecutiveSlowPublishWindows = 0;
             log.warn("Failed to collect fixed publish latency window {} for proof {}", windowId, proof.getId(), e);
             if (e instanceof InterruptedException) {
+                // Keep the prior streak and leave this bucket eligible for a shutdown retry.
                 Thread.currentThread().interrupt();
+            } else {
+                consecutiveSlowPublishWindows = 0;
+                lastPublishLatencyWindowId = windowId;
             }
         }
     }
 
     /** Evaluates only complete fixed windows; a breached result survives recovery. */
-    void recordPublishLatencyWindow(LatencySummary latency) {
+    void recordPublishLatencyWindow(PublishLatencyWindowSnapshot latency) {
         if (proof.getPublishLatencyP99LimitMillis() <= 0 || publishLatencyFailureReason != null) {
             return;
         }
-        if (latency == null || latency.count() <= 0 || latency.p99() <= proof.getPublishLatencyP99LimitMillis()) {
+        if (latency == null || !latency.exceedsP99Limit()) {
             consecutiveSlowPublishWindows = 0;
             return;
         }
@@ -1483,7 +1491,8 @@ public class ProofTask {
         if (consecutiveSlowPublishWindows >= proof.getPublishLatencyConsecutiveWindows()) {
             publishLatencyFailureReason = "Publish latency P99 exceeded " + proof.getPublishLatencyP99LimitMillis()
                     + "ms for " + consecutiveSlowPublishWindows + " consecutive fixed windows ("
-                    + proof.getPublishLatencyWindowSeconds() + "s each); last P99 was " + latency.p99() + "ms.";
+                    + proof.getPublishLatencyWindowSeconds() + "s each); " + latency.overLimitCount() + " of "
+                    + latency.count() + " acknowledgments exceeded the limit in the last window.";
         }
     }
 
@@ -1633,7 +1642,8 @@ public class ProofTask {
         if (!stopping.compareAndSet(false, true)) {
             return;
         }
-        publishLatencyExecutor.shutdownNow();
+        // Stop future ticks without interrupting a read of the final closed bucket.
+        publishLatencyExecutor.shutdown();
         if (publishLatencyChecksStarted) {
             collectCompletedPublishLatencyWindow();
         }

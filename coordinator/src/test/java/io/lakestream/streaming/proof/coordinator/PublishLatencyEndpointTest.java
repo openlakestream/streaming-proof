@@ -24,10 +24,9 @@ import static org.testng.Assert.expectThrows;
 
 import io.javalin.Javalin;
 import io.lakestream.streaming.proof.common.WorkerHttpClient;
-import io.lakestream.streaming.proof.common.records.LatencyMetricSnapshot;
+import io.lakestream.streaming.proof.common.records.PublishLatencyWindowSnapshot;
 import io.lakestream.streaming.proof.worker.Worker;
 import io.lakestream.streaming.proof.worker.WorkerHandler;
-import java.util.List;
 import java.util.concurrent.CompletionException;
 import org.asynchttpclient.AsyncHttpClient;
 import org.asynchttpclient.Dsl;
@@ -37,7 +36,7 @@ public class PublishLatencyEndpointTest {
     @Test
     public void testClosedBucketEndpointIsIdempotentAndMissingProducerFails() throws Exception {
         Worker worker = mock(Worker.class);
-        LatencyMetricSnapshot snapshot = new LatencyMetricSnapshot(1, 16000, 16000, List.of(16000L));
+        PublishLatencyWindowSnapshot snapshot = new PublishLatencyWindowSnapshot(100, 2, 15000);
         doReturn(snapshot).when(worker).publishLatencyWindowSnapshot("p", 42L);
         Javalin app = Javalin.create();
         new WorkerHandler(app, worker);

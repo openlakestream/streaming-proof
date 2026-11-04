@@ -14,11 +14,11 @@
 package io.lakestream.streaming.proof.worker;
 
 import io.lakestream.streaming.proof.common.records.ConsumerCheckPoint;
-import io.lakestream.streaming.proof.common.records.LatencyMetricSnapshot;
 import io.lakestream.streaming.proof.common.records.NewConsumers;
 import io.lakestream.streaming.proof.common.records.NewProducers;
 import io.lakestream.streaming.proof.common.records.ProducerCheckpoint;
 import io.lakestream.streaming.proof.common.records.ProofWorkerMetricsSnapshot;
+import io.lakestream.streaming.proof.common.records.PublishLatencyWindowSnapshot;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -205,7 +205,7 @@ public class Worker {
         return consumer.checkPointDetails();
     }
 
-    public LatencyMetricSnapshot publishLatencyWindowSnapshot(String id, long windowId) {
+    public PublishLatencyWindowSnapshot publishLatencyWindowSnapshot(String id, long windowId) {
         ProofProducers producer = producers.get(id);
         return producer == null ? null : producer.publishLatencyWindowSnapshot(windowId);
     }

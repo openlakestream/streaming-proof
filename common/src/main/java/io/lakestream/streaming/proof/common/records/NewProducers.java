@@ -65,6 +65,7 @@ import io.lakestream.streaming.proof.common.ProofProducer;
  *              create and configure the producer instances
  * @param transactional If true, enables exactly-once processing using embedded transactional processors
  * @param publishLatencyWindowSeconds Fixed latency bucket length; 0 disables collection
+ * @param publishLatencyP99LimitMillis Threshold used to count slow acknowledgments
  *
  * @see Driver
  * @see ProofProducer
@@ -79,9 +80,17 @@ public record NewProducers(String id,
                            String driverName,
                            Driver driver,
                            boolean transactional,
-                           int publishLatencyWindowSeconds) {
+                           int publishLatencyWindowSeconds,
+                           long publishLatencyP99LimitMillis) {
+    public NewProducers(String id, String topic, int producers, int keys, int msgRate,
+                        int messageSize, String driverName, Driver driver, boolean transactional,
+                        int publishLatencyWindowSeconds) {
+        this(id, topic, producers, keys, msgRate, messageSize, driverName, driver, transactional,
+                publishLatencyWindowSeconds, 0);
+    }
+
     public NewProducers(String id, String topic, int producers, int keys, int msgRate,
                         int messageSize, String driverName, Driver driver, boolean transactional) {
-        this(id, topic, producers, keys, msgRate, messageSize, driverName, driver, transactional, 0);
+        this(id, topic, producers, keys, msgRate, messageSize, driverName, driver, transactional, 0, 0);
     }
 }

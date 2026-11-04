@@ -34,10 +34,11 @@ public class ProofPublishLatencyConfigTest {
     public void testProducerRequestDefaultsToDisabled() throws Exception {
         NewProducers request = Util.JSON_MAPPER.readValue("{\"id\":\"p\"}", NewProducers.class);
         assertEquals(request.publishLatencyWindowSeconds(), 0);
-        NewProducers enabled = new NewProducers("p", "t", 1, 1, 1, 8, "pulsar", null, false, 60);
+        NewProducers enabled = new NewProducers("p", "t", 1, 1, 1, 8, "pulsar", null, false, 60, 15000);
         NewProducers restored = Util.JSON_MAPPER.readValue(Util.JSON_MAPPER.writeValueAsString(enabled),
                 NewProducers.class);
         assertEquals(restored.publishLatencyWindowSeconds(), 60);
+        assertEquals(restored.publishLatencyP99LimitMillis(), 15000L);
     }
 
     @Test
