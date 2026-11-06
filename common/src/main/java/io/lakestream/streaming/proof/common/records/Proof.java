@@ -189,6 +189,18 @@ public class Proof {
     @Builder.Default
     private int maxStallSeconds = 0;
 
+    /** Fixed-window publish P99 limit in milliseconds; 0 disables the check. */
+    @Builder.Default
+    private long publishLatencyP99LimitMillis = 0;
+
+    /** Fixed publish latency window length in seconds, independent of chart sampling. */
+    @Builder.Default
+    private int publishLatencyWindowSeconds = 60;
+
+    /** Number of consecutive complete fixed windows above the publish P99 limit. */
+    @Builder.Default
+    private int publishLatencyConsecutiveWindows = 3;
+
     /** Webhook configuration for notifications */
     private WebhookConfig webhookConfig;
 

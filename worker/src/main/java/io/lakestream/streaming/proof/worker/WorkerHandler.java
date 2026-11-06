@@ -80,6 +80,15 @@ public class WorkerHandler {
         app.get(Util.CONSUMER_CHECKPOINTS_DETAILS, this::handleConsumerCheckpointsDetails);
         app.get(Util.WORKER_METRICS, this::handleWorkerMetrics);
         app.get(Util.WORKER_METRICS_WINDOWED, this::handleWorkerMetricsWindowed);
+        app.get(Util.WORKER_PUBLISH_LATENCY_WINDOW, ctx -> {
+            long windowId = ctx.pathParamAsClass("windowId", Long.class).get();
+            Object snapshot = worker.publishLatencyWindowSnapshot(ctx.pathParam("id"), windowId);
+            if (snapshot == null) {
+                ctx.status(404);
+            } else {
+                ctx.result(Util.JSON_WRITER.writeValueAsString(snapshot));
+            }
+        });
         app.post(Util.STOP_PRODUCER, this::handleStopProducer);
         app.post(Util.STOP_CONSUMER, this::handleStopConsumer);
     }

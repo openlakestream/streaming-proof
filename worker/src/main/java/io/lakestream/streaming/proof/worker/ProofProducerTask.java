@@ -115,6 +115,7 @@ public class ProofProducerTask implements AutoCloseable {
 
     /** Publish latency samples for windowed metrics (reset on each snapshot read) */
     private final LatencyRecorder publishLatencyWindow = new LatencyRecorder();
+    private final FixedWindowLatencyRecorder fixedPublishLatencyWindows;
 
     /**
      * Creates a new producer task with the specified number of unique keys.
@@ -125,6 +126,12 @@ public class ProofProducerTask implements AutoCloseable {
      *                    throughput accounting
      */
     public ProofProducerTask(ProofProducer producer, int keys, int messageSize) {
+        this(producer, keys, messageSize, null);
+    }
+
+    ProofProducerTask(ProofProducer producer, int keys, int messageSize,
+                      FixedWindowLatencyRecorder fixedPublishLatencyWindows) {
+        this.fixedPublishLatencyWindows = fixedPublishLatencyWindows;
         if (keys <= 0) {
             throw new IllegalArgumentException("Producer tasks require at least one key");
         }
@@ -166,6 +173,9 @@ public class ProofProducerTask implements AutoCloseable {
                 long latencyMillis = (System.nanoTime() - startedAtNanos) / 1_000_000L;
                 publishLatency.record(latencyMillis);
                 publishLatencyWindow.record(latencyMillis);
+                if (fixedPublishLatencyWindows != null) {
+                    fixedPublishLatencyWindows.record(latencyMillis, System.currentTimeMillis());
+                }
                 synchronized (lastPublished) {
                     LongSeq newMsg = new LongSeq(seq, metadata);
                     LongSeq previousMsg = this.lastPublished.get(key);

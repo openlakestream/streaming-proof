@@ -109,6 +109,8 @@ public class Util {
     public static final String WORKER_METRICS = "/metrics/{id}";
     /** Endpoint to retrieve windowed worker metrics with reset-on-read latency samples */
     public static final String WORKER_METRICS_WINDOWED = "/metrics/{id}/windowed";
+    /** Independent fixed publish latency buckets, addressed by window ID. */
+    public static final String WORKER_PUBLISH_LATENCY_WINDOW = "/metrics/{id}/publish-latency/{windowId}";
     /** Endpoint to stop a running consumer */
     public static final String STOP_CONSUMER = "/consumers/stop/{id}";
 

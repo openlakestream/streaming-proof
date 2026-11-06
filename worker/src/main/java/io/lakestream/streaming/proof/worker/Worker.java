@@ -18,6 +18,7 @@ import io.lakestream.streaming.proof.common.records.NewConsumers;
 import io.lakestream.streaming.proof.common.records.NewProducers;
 import io.lakestream.streaming.proof.common.records.ProducerCheckpoint;
 import io.lakestream.streaming.proof.common.records.ProofWorkerMetricsSnapshot;
+import io.lakestream.streaming.proof.common.records.PublishLatencyWindowSnapshot;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -202,6 +203,11 @@ public class Worker {
             return Map.of();
         }
         return consumer.checkPointDetails();
+    }
+
+    public PublishLatencyWindowSnapshot publishLatencyWindowSnapshot(String id, long windowId) {
+        ProofProducers producer = producers.get(id);
+        return producer == null ? null : producer.publishLatencyWindowSnapshot(windowId);
     }
 
     public ProofWorkerMetricsSnapshot metricsSnapshot(String id) {

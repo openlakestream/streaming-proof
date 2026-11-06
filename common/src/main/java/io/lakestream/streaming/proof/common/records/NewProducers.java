@@ -64,6 +64,8 @@ import io.lakestream.streaming.proof.common.ProofProducer;
  * @param driver The messaging system driver configuration that specifies how to
  *              create and configure the producer instances
  * @param transactional If true, enables exactly-once processing using embedded transactional processors
+ * @param publishLatencyWindowSeconds Fixed latency bucket length; 0 disables collection
+ * @param publishLatencyP99LimitMillis Threshold used to count slow acknowledgments
  *
  * @see Driver
  * @see ProofProducer
@@ -77,5 +79,18 @@ public record NewProducers(String id,
                            int messageSize,
                            String driverName,
                            Driver driver,
-                           boolean transactional) {
+                           boolean transactional,
+                           int publishLatencyWindowSeconds,
+                           long publishLatencyP99LimitMillis) {
+    public NewProducers(String id, String topic, int producers, int keys, int msgRate,
+                        int messageSize, String driverName, Driver driver, boolean transactional,
+                        int publishLatencyWindowSeconds) {
+        this(id, topic, producers, keys, msgRate, messageSize, driverName, driver, transactional,
+                publishLatencyWindowSeconds, 0);
+    }
+
+    public NewProducers(String id, String topic, int producers, int keys, int msgRate,
+                        int messageSize, String driverName, Driver driver, boolean transactional) {
+        this(id, topic, producers, keys, msgRate, messageSize, driverName, driver, transactional, 0, 0);
+    }
 }

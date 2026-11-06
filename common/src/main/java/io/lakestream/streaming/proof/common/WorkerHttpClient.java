@@ -20,6 +20,7 @@ import io.lakestream.streaming.proof.common.records.NewConsumers;
 import io.lakestream.streaming.proof.common.records.NewProducers;
 import io.lakestream.streaming.proof.common.records.ProducerCheckpoint;
 import io.lakestream.streaming.proof.common.records.ProofWorkerMetricsSnapshot;
+import io.lakestream.streaming.proof.common.records.PublishLatencyWindowSnapshot;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import org.asynchttpclient.AsyncHttpClient;
@@ -231,4 +232,23 @@ public class WorkerHttpClient {
                     }
                 });
     }
+    /** Reads one closed fixed bucket without consuming the chart's reset-on-read samples. */
+    public CompletableFuture<PublishLatencyWindowSnapshot> publishLatencyWindow(String id, long windowId)
+            throws Exception {
+        return client.prepareGet(baseUrl + Util.WORKER_PUBLISH_LATENCY_WINDOW
+                        .replace("{id}", id).replace("{windowId}", Long.toString(windowId)))
+                .execute().toCompletableFuture().thenApply(response -> {
+                    if (response.getStatusCode() != HTTP_OK) {
+                        throw new IllegalStateException("Failed to get publish latency window: "
+                                + response.getStatusCode());
+                    }
+                    try {
+                        return Util.JSON_MAPPER.readValue(response.getResponseBody(),
+                                PublishLatencyWindowSnapshot.class);
+                    } catch (Exception e) {
+                        throw new IllegalStateException(e);
+                    }
+                });
+    }
+
 }
