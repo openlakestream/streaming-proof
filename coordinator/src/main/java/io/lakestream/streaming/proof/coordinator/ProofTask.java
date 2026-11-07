@@ -1697,10 +1697,14 @@ public class ProofTask {
             }
         }
 
-        // Keep failed, interrupted, or still-connected runs intact for investigation.
-        if (proof.isCleanupTopicsOnSuccess() && completionHandled.get() && !manuallyStopped.get()
-                && finalVerificationSucceeded && clientsStopped && "passed".equals(finalReport.status())) {
-            deleteProofTopics();
+        try {
+            // Keep failed, interrupted, or still-connected runs intact for investigation.
+            if (proof.isCleanupTopicsOnSuccess() && completionHandled.get() && !manuallyStopped.get()
+                    && finalVerificationSucceeded && clientsStopped && "passed".equals(finalReport.status())) {
+                deleteProofTopics();
+            }
+        } finally {
+            // Reports do not need the task's private topic admin clients after stopping.
             closeTopicDrivers();
         }
 

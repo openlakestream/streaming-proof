@@ -49,6 +49,7 @@ import io.lakestream.streaming.proof.common.records.ProofReport;
 import io.lakestream.streaming.proof.common.records.ProofSummary;
 import io.lakestream.streaming.proof.common.records.ProofWorkerMetricsSnapshot;
 import io.lakestream.streaming.proof.common.records.PulsarProofConfig;
+import io.lakestream.streaming.proof.worker.DriverCache;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.time.LocalDateTime;
@@ -275,6 +276,10 @@ public class ProofTaskTest {
                 .finalWaitSeconds(0).maxStallSeconds(10).build();
         ProofTask task = spy(new ProofTask(proof, new Configs(Map.of(), Map.of()), driver,
                 name -> "secondary".equals(name) ? geoDriver : driver));
+        DriverCache topicDrivers = mock(DriverCache.class);
+        Field cacheField = ProofTask.class.getDeclaredField("topicDriverCache");
+        cacheField.setAccessible(true);
+        cacheField.set(task, topicDrivers);
         WorkerHttpClient worker = mock(WorkerHttpClient.class);
         doReturn(producerStopFails ? CompletableFuture.failedFuture(new RuntimeException("stop producer"))
                 : CompletableFuture.completedFuture(null)).when(worker).stopProducers(proof.getId());
@@ -326,6 +331,16 @@ public class ProofTaskTest {
                 order.verify(driver).deleteTopic("cleanup-topic_transactional");
                 order.verify(driver).deleteTopic("cleanup-topic");
             }
+            verify(topicDrivers).close();
+            verify(driver, never()).close();
+            verify(geoDriver, never()).close();
+            InOrder shutdownOrder = inOrder(worker, driver, geoDriver, topicDrivers);
+            shutdownOrder.verify(worker).stopAndRemoveConsumers(proof.getId());
+            if (shouldDelete) {
+                shutdownOrder.verify(driver).deleteTopic("cleanup-topic");
+                shutdownOrder.verify(geoDriver).deleteTopic("cleanup-topic");
+            }
+            shutdownOrder.verify(topicDrivers).close();
             assertFalse(task.isRunning());
             assertEquals(task.getReport().status(), expectedStatus);
             if (!consumerLags) {
