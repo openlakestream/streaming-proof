@@ -869,7 +869,7 @@ public class ProofTask {
             cp.calculate();
             return new ProofSummary(
                     verified,
-                    countProducerErrors(this.getLastVerifiedProducerCheckpoint()),
+                    currentProducerErrors(),
                     0, // out-of-order: not applicable for Shared
                     countSharedMissed(),
                     cp.getDuplicatedCount().values().stream().reduce(0L, Long::sum),
@@ -883,7 +883,7 @@ public class ProofTask {
         lastVerifiedConsumerCheckpoint.calculate();
         return new ProofSummary(
                 verified,
-                countProducerErrors(this.getLastVerifiedProducerCheckpoint()),
+                currentProducerErrors(),
                 proof.getFeatures() != null && proof.getFeatures().contains("ordering")
                         ? lastVerifiedConsumerCheckpoint.getOutOfOrderSeqs().values().stream()
                                 .flatMap(ranges -> ranges.stream()
@@ -1205,7 +1205,7 @@ public class ProofTask {
         if (manuallyStopped.get()) {
             return "stopped";
         }
-        if (summary.missed() > 0 || summary.outOfOrders() > 0
+        if (summary.errors() > 0 || summary.missed() > 0 || summary.outOfOrders() > 0
                 || isCheckpointRecovery() && (summary.duplicates() > 0 || summary.writeDuplicates() > 0)) {
             return "failed";
         }
@@ -1243,6 +1243,9 @@ public class ProofTask {
         if (summary.missed() > 0) {
             return "Some messages were not verified by consumers.";
         }
+        if (summary.errors() > 0) {
+            return "Producer send or acknowledgement validation errors were detected.";
+        }
         if (proof.getMaxStallSeconds() > 0
                 && summary.maxVerifiedStallSeconds() > proof.getMaxStallSeconds()) {
             return "Verification stalled for " + summary.maxVerifiedStallSeconds()
@@ -1277,6 +1280,13 @@ public class ProofTask {
         return checkpoint.getPublished().values().stream()
                 .mapToLong(longSeq -> Math.max(0L, longSeq.seq() + 1))
                 .sum();
+    }
+
+    private int currentProducerErrors() {
+        // Producer errors are cumulative; an unverified checkpoint must not hide a terminal send failure.
+        return Math.max(Math.max(countProducerErrors(latestProducerCheckpoint), countProducerErrors(inCheck)),
+                Math.max(countProducerErrors(lastVerifiedProducerCheckpoint),
+                        countProducerErrors(lastFailedProducerCheckpoint)));
     }
 
     private static int countProducerErrors(ProducerCheckpoint checkpoint) {

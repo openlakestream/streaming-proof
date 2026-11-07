@@ -22,6 +22,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.NavigableMap;
+import java.util.Objects;
+import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
 import lombok.extern.slf4j.Slf4j;
@@ -85,12 +88,14 @@ public class ProofProducerTask implements AutoCloseable {
     /** Maps each key to its current sequence number */
     private final Map<String, AtomicLong> keySeq;
 
-    /** 
-     * Maps keys to their most recently published messages. Each key maps to a LongMessage 
-     * containing the sequence number and metadata of the last successfully published message.
-     * This map is updated whenever a message is successfully sent.
-     */
+    /** Contiguous successful acknowledgement watermarks, also used as the state lock. */
     private final Map<String, LongSeq> lastPublished;
+
+    /** Successful completions waiting for earlier sequences, guarded by lastPublished. */
+    private final Map<String, NavigableMap<Long, LongSeq>> completed = new HashMap<>();
+
+    /** Earliest terminal failure per key; a checkpoint must never cross it. */
+    private final Map<String, Long> firstFailed = new HashMap<>();
 
     /** Last acknowledgement with a known position, guarded by lastPublished. */
     private final Map<String, LongSeq> lastPositioned = new HashMap<>();
@@ -103,6 +108,9 @@ public class ProofProducerTask implements AutoCloseable {
 
     /** Total send attempts */
     private final AtomicLong sendAttempts = new AtomicLong(0);
+
+    /** Terminal driver send failures, excluding acknowledgement validation errors. */
+    private final AtomicLong sendFailures = new AtomicLong(0);
 
     /** Total acknowledged sends */
     private final AtomicLong acknowledged = new AtomicLong(0);
@@ -163,12 +171,23 @@ public class ProofProducerTask implements AutoCloseable {
         long seq = keySeq.get(key).getAndIncrement();
         long startedAtNanos = System.nanoTime();
         sendAttempts.incrementAndGet();
-        return producer.sendAsync(key, seq).whenComplete((metadata, e) -> {
+        CompletableFuture<MessageMetadata> send;
+        try {
+            send = Objects.requireNonNull(producer.sendAsync(key, seq), "Producer returned a null future");
+        } catch (RuntimeException e) {
+            recordSendFailure(key, seq, e);
+            return CompletableFuture.failedFuture(e);
+        }
+        return send.whenComplete((metadata, e) -> {
             if (e != null) {
-                long now = System.currentTimeMillis();
-                recordError(e.getMessage(), now);
-            } else {
-                acknowledged.incrementAndGet();
+                recordSendFailure(key, seq, e);
+                return;
+            }
+            // Count transport acknowledgements separately from validation errors.
+            acknowledged.incrementAndGet();
+            long processingSeq = seq;
+            try {
+                Objects.requireNonNull(metadata, "Producer returned null acknowledgement metadata");
                 acknowledgedBytes.addAndGet(estimateMessageBytes(key));
                 long latencyMillis = (System.nanoTime() - startedAtNanos) / 1_000_000L;
                 publishLatency.record(latencyMillis);
@@ -177,43 +196,69 @@ public class ProofProducerTask implements AutoCloseable {
                     fixedPublishLatencyWindows.record(latencyMillis, System.currentTimeMillis());
                 }
                 synchronized (lastPublished) {
-                    LongSeq newMsg = new LongSeq(seq, metadata);
-                    LongSeq previousMsg = this.lastPublished.get(key);
-                    if (previousMsg != null) {
-                        if (newMsg.compareTo(previousMsg) <= 0) {
-                            log.error("Seq out of order writes | key: {} | new message: {} | previous message: {}",
-                                    key, newMsg, previousMsg);
-                            recordError("Seq out of order writes", System.currentTimeMillis());
-                        }
-                        if (newMsg.seq() - previousMsg.seq() > 1) {
-                            log.error("Seq writes gap | key: {} | new message: {} | previous message: {}",
-                                    key, newMsg, previousMsg);
-                            recordError("Seq writes gap", System.currentTimeMillis());
-                        }
+                    if (!hasPosition(metadata)) {
+                        // A valid duplicate ACK may have no position. Retain its identity in normal logs.
+                        log.warn("Acknowledged without position | key: {} | seq: {} | metadata: {} | last known: {}",
+                                key, seq, metadata, lastPositioned.get(key));
                     }
-                    // Duplicate acknowledgements can succeed without a known log position.
-                    // Keep the last known position so they neither report nor hide a regression.
-                    if (hasPosition(metadata)) {
-                        LongSeq previousPositioned = lastPositioned.get(key);
-                        if (previousPositioned != null && !metadata.isAfter(previousPositioned.metadata())) {
-                            log.error("Offset out of order writes | key: {} | new message: {} | previous message: {}",
-                                    key, newMsg, previousPositioned);
-                            recordError("Offset out of order writes", System.currentTimeMillis());
+                    if (seq < firstFailed.getOrDefault(key, Long.MAX_VALUE)) {
+                        NavigableMap<Long, LongSeq> waiting = completed.computeIfAbsent(key, k -> new TreeMap<>());
+                        waiting.put(seq, new LongSeq(seq, metadata));
+                        LongSeq next;
+                        while ((next = waiting.get(lastPublished.get(key).seq() + 1)) != null) {
+                            processingSeq = next.seq();
+                            validatePosition(key, next);
+                            lastPublished.put(key, next);
+                            waiting.remove(next.seq());
                         }
-                        if (previousPositioned == null || newMsg.compareTo(previousPositioned) > 0) {
-                            lastPositioned.put(key, newMsg);
+                        if (waiting.isEmpty()) {
+                            completed.remove(key);
                         }
-                    } else {
-                        log.debug("Acknowledged without position | key: {} | new message: {} | last known: {}",
-                                key, newMsg, lastPositioned.get(key));
-                    }
-                    // A delayed completion must not move the published checkpoint backward.
-                    if (previousMsg == null || newMsg.compareTo(previousMsg) > 0) {
-                        lastPublished.put(key, newMsg);
                     }
                 }
+            } catch (RuntimeException processingError) {
+                markFailed(key, processingSeq);
+                recordError("Producer acknowledgement processing failed", System.currentTimeMillis());
+                log.error("Producer acknowledgement processing failed | key: {} | seq: {} | metadata: {}",
+                        key, processingSeq, metadata, processingError);
+                throw processingError;
             }
         });
+    }
+
+    private void validatePosition(String key, LongSeq message) {
+        if (!hasPosition(message.metadata())) {
+            return;
+        }
+        LongSeq previous = lastPositioned.get(key);
+        if (previous != null && !message.metadata().isAfter(previous.metadata())) {
+            log.error("Offset out of order writes | key: {} | new message: {} | previous message: {}",
+                    key, message, previous);
+            recordError("Offset out of order writes", System.currentTimeMillis());
+        }
+        lastPositioned.put(key, message);
+    }
+
+    private void recordSendFailure(String key, long seq, Throwable error) {
+        sendFailures.incrementAndGet();
+        markFailed(key, seq);
+        recordError(error.getMessage() != null ? error.getMessage() : error.getClass().getName(),
+                System.currentTimeMillis());
+        log.error("Producer send failed | key: {} | seq: {}", key, seq, error);
+    }
+
+    private void markFailed(String key, long seq) {
+        synchronized (lastPublished) {
+            long barrier = firstFailed.merge(key, seq, Math::min);
+            NavigableMap<Long, LongSeq> waiting = completed.get(key);
+            if (waiting != null) {
+                // Later successes can never close a terminal gap; do not retain them indefinitely.
+                waiting.tailMap(barrier, true).clear();
+                if (waiting.isEmpty()) {
+                    completed.remove(key);
+                }
+            }
+        }
     }
 
     private static boolean hasPosition(MessageMetadata metadata) {
@@ -225,6 +270,10 @@ public class ProofProducerTask implements AutoCloseable {
 
     public long getSendAttempts() {
         return sendAttempts.get();
+    }
+
+    public long getSendFailures() {
+        return sendFailures.get();
     }
 
     public long getAcknowledged() {
@@ -247,8 +296,10 @@ public class ProofProducerTask implements AutoCloseable {
         return publishLatencyWindow.snapshotAndReset();
     }
 
-    public synchronized Map<String, LongSeq> getLastPublished() {
-        return Collections.unmodifiableMap(lastPublished);
+    public Map<String, LongSeq> getLastPublished() {
+        synchronized (lastPublished) {
+            return Collections.unmodifiableMap(new HashMap<>(lastPublished));
+        }
     }
 
     public Map<String, ErrorOccurrence> getErrorDetails() {

@@ -78,12 +78,12 @@ public class UnknownPublishPositionTest {
             }
             sends.get(1).complete(new MessageMetadata(10L, 10L));
             sends.get(0).complete(new MessageMetadata(10L, 8L));
-            assertEquals(task.getErrorDetails().get("Offset out of order writes").getCount(), 1L);
+            assertEquals(task.getErrorDetails().size(), 0);
             sends.get(2).complete(new MessageMetadata(-1L, -1L));
-            assertEquals(task.getErrorDetails().get("Offset out of order writes").getCount(), 1L);
+            assertEquals(task.getErrorDetails().size(), 0);
             sends.get(3).complete(new MessageMetadata(10L, 9L));
-            // The delayed callback and the genuine regression after the sentinel both count.
-            assertEquals(task.getErrorDetails().get("Offset out of order writes").getCount(), 2L);
+            // Only the genuine position regression counts, not the delayed callback.
+            assertEquals(task.getErrorDetails().get("Offset out of order writes").getCount(), 1L);
             assertEquals(task.getLastPublished().values().iterator().next().seq(), 3L);
         }
     }

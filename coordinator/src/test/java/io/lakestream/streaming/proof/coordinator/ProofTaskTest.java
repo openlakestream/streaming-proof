@@ -39,6 +39,7 @@ import io.lakestream.streaming.proof.common.records.Configs;
 import io.lakestream.streaming.proof.common.records.ConsumerCheckPoint;
 import io.lakestream.streaming.proof.common.records.Driver;
 import io.lakestream.streaming.proof.common.records.Drivers;
+import io.lakestream.streaming.proof.common.records.ErrorOccurrence;
 import io.lakestream.streaming.proof.common.records.KafkaProofConfig;
 import io.lakestream.streaming.proof.common.records.ProducerCheckpoint;
 import io.lakestream.streaming.proof.common.records.Proof;
@@ -1259,6 +1260,42 @@ public class ProofTaskTest {
             assertEquals(status, "failed");
             String reason = invokeDetermineResultReason(task, summary, status);
             assertTrue(reason.contains("not verified")); // missed reason wins, not the stall reason
+        } finally {
+            task.getExecutor().shutdownNow();
+        }
+    }
+
+    @DataProvider
+    public Object[][] producerErrorModes() {
+        return new Object[][] {
+            {false, "latestProducerCheckpoint"}, {true, "latestProducerCheckpoint"},
+            {false, "inCheck"}, {true, "inCheck"},
+            {false, "lastFailedProducerCheckpoint"}, {true, "lastFailedProducerCheckpoint"},
+            {false, "lastVerifiedProducerCheckpoint"}, {true, "lastVerifiedProducerCheckpoint"}
+        };
+    }
+
+    @Test(dataProvider = "producerErrorModes")
+    public void testUnverifiedProducerErrorsFailTheFinalResult(boolean shared, String checkpointField) throws Exception {
+        Proof proof = Proof.builder().topic("t").features(List.of("at_least_once")).build();
+        ProofTask task = new ProofTask(proof, new Configs(Map.of(), Map.of()), mock(ProofDriver.class));
+        try {
+            Field mode = ProofTask.class.getDeclaredField("sharedMode");
+            mode.setAccessible(true);
+            mode.setBoolean(task, shared);
+            getRunningFlag(task).set(false);
+            ProducerCheckpoint checkpoint = new ProducerCheckpoint();
+            checkpoint.addErrorDetails("send failure", ErrorOccurrence.firstSeen(System.currentTimeMillis()));
+            Field latest = ProofTask.class.getDeclaredField(checkpointField);
+            latest.setAccessible(true);
+            latest.set(task, checkpoint);
+
+            ProofSummary summary = task.getSummary();
+            assertEquals(summary.errors(), 1);
+            assertEquals(summary.missed(), 0);
+            String status = invokeDetermineResultStatus(task, summary);
+            assertEquals(status, "failed");
+            assertTrue(invokeDetermineResultReason(task, summary, status).contains("acknowledgement"));
         } finally {
             task.getExecutor().shutdownNow();
         }

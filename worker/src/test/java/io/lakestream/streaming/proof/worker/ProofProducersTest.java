@@ -150,15 +150,14 @@ public class ProofProducersTest {
         task.sendAsync();
 
         producer.complete(1);
-        assertEquals(task.getLastPublished().values().iterator().next().seq(), 1L);
+        assertEquals(task.getLastPublished().values().iterator().next().seq(), -1L);
 
         producer.complete(0);
         assertEquals(task.getLastPublished().values().iterator().next().seq(), 1L);
 
         producer.complete(2);
         assertEquals(task.getLastPublished().values().iterator().next().seq(), 2L);
-        assertEquals(task.getErrorDetails().get("Seq writes gap").getCount(), 1);
-        assertEquals(task.getErrorDetails().get("Seq out of order writes").getCount(), 1);
+        assertTrue(task.getErrorDetails().isEmpty());
     }
 
     private ProducerCheckpoint waitForCheckpoint(ProofProducers proofProducers) throws InterruptedException {

@@ -27,7 +27,7 @@ import lombok.Data;
 @Data
 public class ProducerCheckpoint {
 
-    /** Map storing the latest sequence number for each published message key */
+    /** Map storing the contiguous acknowledged sequence watermark for each producer key. */
     private final Map<String, LongSeq> published = new HashMap<>();
 
     /** Map storing aggregated error timing details */

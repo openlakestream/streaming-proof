@@ -15,7 +15,6 @@ package io.lakestream.streaming.proof.worker;
 
 import io.lakestream.streaming.proof.common.ProofDriver;
 import io.lakestream.streaming.proof.common.ProofProducer;
-import io.lakestream.streaming.proof.common.records.ErrorOccurrence;
 import io.lakestream.streaming.proof.common.records.LatencyMetricSnapshot;
 import io.lakestream.streaming.proof.common.records.NewProducers;
 import io.lakestream.streaming.proof.common.records.ProducerCheckpoint;
@@ -199,9 +198,7 @@ public class ProofProducers {
         for (ProofProducerTask task : tasks) {
             sendAttempts += task.getSendAttempts();
             acknowledgedMessages += task.getAcknowledged();
-            publishErrors += task.getErrorDetails().values().stream()
-                    .mapToLong(ErrorOccurrence::getCount)
-                    .sum();
+            publishErrors += task.getSendFailures();
             LatencyMetricSnapshot latencySnapshot = task.getPublishLatencySnapshot();
             publishLatency.mergeFrom(latencySnapshot);
         }
@@ -229,9 +226,7 @@ public class ProofProducers {
         for (ProofProducerTask task : tasks) {
             sendAttempts += task.getSendAttempts();
             acknowledgedMessages += task.getAcknowledged();
-            publishErrors += task.getErrorDetails().values().stream()
-                    .mapToLong(ErrorOccurrence::getCount)
-                    .sum();
+            publishErrors += task.getSendFailures();
             LatencyMetricSnapshot latencySnapshot = task.getPublishLatencyWindowSnapshot();
             publishLatency.mergeFrom(latencySnapshot);
         }
