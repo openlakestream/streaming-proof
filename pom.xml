@@ -76,7 +76,7 @@
         <curator.version>5.8.0</curator.version>
         <awaitility.version>4.3.0</awaitility.version>
         <mockito.version>5.17.0</mockito.version>
-        <testcontainers.version>1.19.0</testcontainers.version>
+        <testcontainers.version>1.21.4</testcontainers.version>
     </properties>
 
     <dependencyManagement>
