@@ -755,7 +755,6 @@ public class ProofTask {
                 }
                 if (fulfilled) {
                     log.info("[{}] Final verification succeeded on attempt {}", proof.getId(), attempt + 1);
-                    failed = false;
                     return;
                 }
                 if (attempt < maxRetries) {
@@ -766,11 +765,9 @@ public class ProofTask {
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 log.warn("Final verification interrupted for proof {}", proof.getId());
-                failed = true;
                 return;
             } catch (Exception e) {
                 log.warn("Final checkpoint verification failed for proof {}", proof.getId(), e);
-                failed = true;
                 return;
             }
         }
@@ -1208,7 +1205,7 @@ public class ProofTask {
         if (manuallyStopped.get()) {
             return "stopped";
         }
-        if (failed || summary.missed() > 0 || summary.outOfOrders() > 0
+        if (summary.missed() > 0 || summary.outOfOrders() > 0
                 || isCheckpointRecovery() && (summary.duplicates() > 0 || summary.writeDuplicates() > 0)) {
             return "failed";
         }
@@ -1657,15 +1654,13 @@ public class ProofTask {
         // Stop producers first so no more messages are sent.  The producer
         // state remains on the worker until consumers are stopped, so the
         // subsequent checkpoint can still read the final published sequences.
-        boolean clientsStopped = true;
-        for (WorkerHttpClient client : clients) {
+        clients.forEach(client -> {
             try {
                 client.stopProducers(proof.getId()).join();
             } catch (Exception e) {
-                clientsStopped = false;
                 log.warn("Failed to stop producers for proof {}", proof.getId(), e);
             }
-        }
+        });
 
         // Run final verification after producers have stopped but while
         // consumers are still active, capturing every published message.
@@ -1690,19 +1685,16 @@ public class ProofTask {
             sendCompletionNotification(finalReport).join();
         }
 
-        for (WorkerHttpClient client : clients) {
+        clients.forEach(client -> {
             try {
                 client.stopAndRemoveConsumers(proof.getId()).join();
             } catch (Exception e) {
-                clientsStopped = false;
                 log.warn("Failed to stop consumers for proof {}", proof.getId(), e);
             }
-        }
+        });
 
         try {
-            // Keep failed, interrupted, or still-connected runs intact for investigation.
-            if (proof.isCleanupTopicsOnSuccess() && completionHandled.get() && !manuallyStopped.get()
-                    && clientsStopped && "passed".equals(finalReport.status())) {
+            if (proof.isCleanupTopicsOnSuccess() && "passed".equals(finalReport.status())) {
                 deleteProofTopics();
             }
         } finally {

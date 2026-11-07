@@ -241,9 +241,9 @@ curl -X POST http://localhost:8080/proofs \
 
 `timeout` controls checkpoint verification while the proof is running. `finalWaitSeconds` controls the extra wait for consumers to catch up after producers stop.
 
-Set `"cleanupTopicsOnSuccess": true` in a proof request to delete its test topics after a naturally
-completed run passes final verification and all producers and consumers stop successfully. The default
-is `false`. Failed runs and manually stopped runs retain their topics for investigation. Cleanup
+Set `"cleanupTopicsOnSuccess": true` in a proof request to delete its test topics after shutdown
+when the final report status is `passed`. The default is `false`. Failed runs and manually stopped
+runs retain their topics for investigation. Cleanup
 includes the `_transactional` topic for exactly-once tests and the configured geo drivers, while the
 Proof record and report remain available. Deletion failures are logged and do not change the test
 result; deleting the Proof explicitly retries topic cleanup. This cleanup does not depend on broker
