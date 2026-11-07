@@ -257,7 +257,7 @@ public class ProofTaskTest {
                 {false, false, false, false, false, false, false, false, "passed"},
                 {true, true, false, false, false, false, false, false, "stopped"},
                 {true, false, true, false, false, false, false, false, "failed"},
-                {true, false, false, true, false, false, false, false, "passed"},
+                {true, false, false, true, false, false, false, false, "failed"},
                 {true, false, false, false, true, false, false, false, "passed"},
                 {true, false, false, false, false, true, false, false, "passed"},
                 {true, false, false, false, false, false, true, true, "passed"}
@@ -297,6 +297,10 @@ public class ProofTaskTest {
         }
         try {
             getRunningFlag(task).set(true);
+            // A successful final verification must clear an earlier checkpoint failure.
+            Field failedField = ProofTask.class.getDeclaredField("failed");
+            failedField.setAccessible(true);
+            failedField.setBoolean(task, true);
             setLongField(task, "lastVerifiedObserved", 10L);
             setLongField(task, "lastVerifiedChangeMillis", System.currentTimeMillis() - (failed ? 20_000 : 0));
             ProducerCheckpoint producerCp = new ProducerCheckpoint();
@@ -353,23 +357,35 @@ public class ProofTaskTest {
         }
     }
 
-    @Test
-    public void testCheckpointReadFailurePreservesTopicsWithCleanupEnabled() throws Exception {
+    @DataProvider
+    public Object[][] finalVerificationErrors() {
+        return new Object[][] {
+                {new RuntimeException("checkpoint unavailable")},
+                {new InterruptedException("verification interrupted")}
+        };
+    }
+
+    @Test(dataProvider = "finalVerificationErrors")
+    public void testCheckpointReadFailurePreservesTopicsWithCleanupEnabled(Exception error) throws Exception {
         ProofDriver driver = mock(ProofDriver.class);
         Proof proof = Proof.builder().id("cleanup-proof").topic("cleanup-topic")
                 .features(List.of("at_least_once")).cleanupTopicsOnSuccess(true).finalWaitSeconds(0).build();
         ProofTask task = spy(new ProofTask(proof, new Configs(Map.of(), Map.of()), driver));
         try {
             getRunningFlag(task).set(true);
-            doThrow(new RuntimeException("checkpoint unavailable")).when(task).aggregateCheckpoints();
+            doAnswer(invocation -> {
+                throw error;
+            }).when(task).aggregateCheckpoints();
             Method complete = ProofTask.class.getDeclaredMethod("completeProofAfterDuration");
             complete.setAccessible(true);
             complete.invoke(task);
 
             verify(driver, never()).deleteTopic(any());
             assertFalse(task.isRunning());
-            assertNotNull(task.getReport());
+            assertEquals(task.getReport().status(), "failed");
+            assertEquals(Thread.currentThread().isInterrupted(), error instanceof InterruptedException);
         } finally {
+            Thread.interrupted();
             task.getExecutor().shutdownNow();
             task.getPublishLatencyExecutor().shutdownNow();
         }

@@ -707,7 +707,7 @@ public class ProofTask {
         return DEFAULT_FINAL_WAIT_SECONDS;
     }
 
-    private boolean runFinalVerification() {
+    private void runFinalVerification() {
         int maxRetries = resolveFinalWaitSeconds();
         for (int attempt = 0; attempt <= maxRetries; attempt++) {
             try {
@@ -755,7 +755,8 @@ public class ProofTask {
                 }
                 if (fulfilled) {
                     log.info("[{}] Final verification succeeded on attempt {}", proof.getId(), attempt + 1);
-                    return true;
+                    failed = false;
+                    return;
                 }
                 if (attempt < maxRetries) {
                     log.info("[{}] Final verification waiting for consumers to catch up (attempt {}/{})",
@@ -765,16 +766,17 @@ public class ProofTask {
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 log.warn("Final verification interrupted for proof {}", proof.getId());
-                return false;
+                failed = true;
+                return;
             } catch (Exception e) {
                 log.warn("Final checkpoint verification failed for proof {}", proof.getId(), e);
-                return false;
+                failed = true;
+                return;
             }
         }
         failed = true;
         log.warn("[{}] Final verification: consumers did not catch up within {} seconds",
                 proof.getId(), maxRetries);
-        return false;
     }
 
     Pair<ProducerCheckpoint, ConsumerCheckPoint> aggregateCheckpoints() {
@@ -1206,7 +1208,7 @@ public class ProofTask {
         if (manuallyStopped.get()) {
             return "stopped";
         }
-        if (summary.missed() > 0 || summary.outOfOrders() > 0
+        if (failed || summary.missed() > 0 || summary.outOfOrders() > 0
                 || isCheckpointRecovery() && (summary.duplicates() > 0 || summary.writeDuplicates() > 0)) {
             return "failed";
         }
@@ -1667,7 +1669,7 @@ public class ProofTask {
 
         // Run final verification after producers have stopped but while
         // consumers are still active, capturing every published message.
-        boolean finalVerificationSucceeded = runFinalVerification();
+        runFinalVerification();
 
         // Record a final time-series point so the chart reflects the
         // fully-verified state after all consumers have caught up.
@@ -1700,7 +1702,7 @@ public class ProofTask {
         try {
             // Keep failed, interrupted, or still-connected runs intact for investigation.
             if (proof.isCleanupTopicsOnSuccess() && completionHandled.get() && !manuallyStopped.get()
-                    && finalVerificationSucceeded && clientsStopped && "passed".equals(finalReport.status())) {
+                    && clientsStopped && "passed".equals(finalReport.status())) {
                 deleteProofTopics();
             }
         } finally {
