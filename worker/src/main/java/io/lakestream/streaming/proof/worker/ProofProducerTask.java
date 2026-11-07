@@ -88,13 +88,16 @@ public class ProofProducerTask implements AutoCloseable {
     /** Maps each key to its current sequence number */
     private final Map<String, AtomicLong> keySeq;
 
-    /** Contiguous successful acknowledgement watermarks, also used as the state lock. */
+    /** Maximum acknowledged sequence per key, also used as the state lock. */
     private final Map<String, LongSeq> lastPublished;
 
-    /** Successful completions waiting for earlier sequences, guarded by lastPublished. */
+    /** Contiguous sequence checked for position ordering; never used as the consumer target. */
+    private final Map<String, Long> validatedThrough = new HashMap<>();
+
+    /** Successful completions waiting for earlier position validation, guarded by lastPublished. */
     private final Map<String, NavigableMap<Long, LongSeq>> completed = new HashMap<>();
 
-    /** Earliest terminal failure per key; a checkpoint must never cross it. */
+    /** Earliest terminal failure per key; position validation cannot cross it. */
     private final Map<String, Long> firstFailed = new HashMap<>();
 
     /** Last acknowledgement with a known position, guarded by lastPublished. */
@@ -196,6 +199,10 @@ public class ProofProducerTask implements AutoCloseable {
                     fixedPublishLatencyWindows.record(latencyMillis, System.currentTimeMillis());
                 }
                 synchronized (lastPublished) {
+                    // Consumer verification needs the maximum ACK, including successes beyond a gap.
+                    if (seq > lastPublished.get(key).seq()) {
+                        lastPublished.put(key, new LongSeq(seq, metadata));
+                    }
                     if (!hasPosition(metadata)) {
                         // A valid duplicate ACK may have no position. Retain its identity in normal logs.
                         log.warn("Acknowledged without position | key: {} | seq: {} | metadata: {} | last known: {}",
@@ -205,10 +212,10 @@ public class ProofProducerTask implements AutoCloseable {
                         NavigableMap<Long, LongSeq> waiting = completed.computeIfAbsent(key, k -> new TreeMap<>());
                         waiting.put(seq, new LongSeq(seq, metadata));
                         LongSeq next;
-                        while ((next = waiting.get(lastPublished.get(key).seq() + 1)) != null) {
+                        while ((next = waiting.get(validatedThrough.getOrDefault(key, -1L) + 1)) != null) {
                             processingSeq = next.seq();
                             validatePosition(key, next);
-                            lastPublished.put(key, next);
+                            validatedThrough.put(key, next.seq());
                             waiting.remove(next.seq());
                         }
                         if (waiting.isEmpty()) {

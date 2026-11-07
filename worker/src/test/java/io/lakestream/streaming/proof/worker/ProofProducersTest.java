@@ -150,7 +150,7 @@ public class ProofProducersTest {
         task.sendAsync();
 
         producer.complete(1);
-        assertEquals(task.getLastPublished().values().iterator().next().seq(), -1L);
+        assertEquals(task.getLastPublished().values().iterator().next().seq(), 1L);
 
         producer.complete(0);
         assertEquals(task.getLastPublished().values().iterator().next().seq(), 1L);

@@ -17,10 +17,14 @@ import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertThrows;
 import static org.testng.Assert.assertTrue;
 
+import io.lakestream.streaming.proof.common.LongSeq;
 import io.lakestream.streaming.proof.common.MessageMetadata;
 import io.lakestream.streaming.proof.common.ProofProducer;
+import io.lakestream.streaming.proof.common.records.ConsumerCheckPoint;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.function.BiFunction;
@@ -39,7 +43,7 @@ public class ProducerAcknowledgementTest {
             var failure = task.sendAsync();
             assertThrows(CompletionException.class, failure::join);
             task.sendAsync().join();
-            assertEquals(watermark(task), 0L);
+            assertEquals(maxPublished(task), 2L);
             assertEquals(task.getSendAttempts(), 3L);
             assertEquals(task.getAcknowledged(), 2L);
             assertEquals(task.getSendFailures(), 1L);
@@ -62,15 +66,20 @@ public class ProducerAcknowledgementTest {
             sends.get(1).completeExceptionally(new IllegalStateException("async failure"));
             sends.get(0).complete(new MessageMetadata(0L));
             sends.get(2).complete(new MessageMetadata(2L));
-            assertEquals(watermark(task), 0L);
+            assertEquals(maxPublished(task), 3L);
             assertEquals(task.getAcknowledged(), 3L);
             assertEquals(task.getSendFailures(), 1L);
             assertEquals(task.getErrorDetails().size(), 1);
+            String key = task.getLastPublished().keySet().iterator().next();
+            ConsumerCheckPoint consumer = new ConsumerCheckPoint();
+            consumer.addKey(key, new TreeMap<>(Map.of("first", range(0, 0), "later", range(2, 3))));
+            assertEquals(consumer.countUnconsumed(key, -1L, maxPublished(task)), 1L);
+
         }
     }
 
     @Test
-    public void outOfOrderAcknowledgementsAdvanceOnlyAContiguousWatermark() throws Exception {
+    public void pendingEarlierAcknowledgementsDoNotHideTheConsumerVerificationTarget() throws Exception {
         List<CompletableFuture<MessageMetadata>> sends = new ArrayList<>();
         try (ProofProducerTask task = task((key, seq) -> {
             var future = new CompletableFuture<MessageMetadata>();
@@ -82,11 +91,11 @@ public class ProducerAcknowledgementTest {
             }
             sends.get(3).complete(new MessageMetadata(3L));
             sends.get(1).complete(new MessageMetadata(1L));
-            assertEquals(watermark(task), -1L);
+            assertEquals(maxPublished(task), 3L);
             sends.get(0).complete(new MessageMetadata(0L));
-            assertEquals(watermark(task), 1L);
+            assertEquals(maxPublished(task), 3L);
             sends.get(2).complete(new MessageMetadata(2L));
-            assertEquals(watermark(task), 3L);
+            assertEquals(maxPublished(task), 3L);
             assertTrue(task.getErrorDetails().isEmpty());
         }
     }
@@ -99,7 +108,7 @@ public class ProducerAcknowledgementTest {
             var invalid = task.sendAsync();
             assertThrows(CompletionException.class, invalid::join);
             task.sendAsync().join();
-            assertEquals(watermark(task), 0L);
+            assertEquals(maxPublished(task), 2L);
             assertEquals(task.getAcknowledged(), 3L);
             assertEquals(task.getSendFailures(), 0L);
             assertEquals(task.getErrorDetails().get("Producer acknowledgement processing failed").getCount(), 1L);
@@ -110,7 +119,7 @@ public class ProducerAcknowledgementTest {
     public void nullFutureIsATerminalSendFailure() throws Exception {
         try (ProofProducerTask task = task((key, seq) -> null)) {
             assertThrows(CompletionException.class, () -> task.sendAsync().join());
-            assertEquals(watermark(task), -1L);
+            assertEquals(maxPublished(task), -1L);
             assertEquals(task.getSendFailures(), 1L);
             assertEquals(task.getAcknowledged(), 0L);
         }
@@ -133,7 +142,7 @@ public class ProducerAcknowledgementTest {
             var snapshot = task.getLastPublished();
             task.sendAsync().join();
             assertEquals(snapshot.values().iterator().next().seq(), 0L);
-            assertEquals(watermark(task), 1L);
+            assertEquals(maxPublished(task), 1L);
         }
     }
 
@@ -149,7 +158,14 @@ public class ProducerAcknowledgementTest {
         }
     }
 
-    private static long watermark(ProofProducerTask task) {
+    private static ConsumerCheckPoint.SeqRange range(long start, long end) {
+        ConsumerCheckPoint.SeqRange range = new ConsumerCheckPoint.SeqRange();
+        range.setStart(new LongSeq(start, new MessageMetadata(start)));
+        range.setEnd(new LongSeq(end, new MessageMetadata(end)));
+        return range;
+    }
+
+    private static long maxPublished(ProofProducerTask task) {
         return task.getLastPublished().values().iterator().next().seq();
     }
 
