@@ -1694,7 +1694,8 @@ public class ProofTask {
         });
 
         try {
-            if (proof.isCleanupTopicsOnSuccess() && "passed".equals(finalReport.status())) {
+            if (proof.isCleanupTopicsOnSuccess()
+                    && ("passed".equals(finalReport.status()) || "stopped".equals(finalReport.status()))) {
                 deleteProofTopics();
             }
         } finally {

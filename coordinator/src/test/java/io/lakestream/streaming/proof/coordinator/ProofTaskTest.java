@@ -255,7 +255,8 @@ public class ProofTaskTest {
         return new Object[][] {
                 {true, false, false, false, false, false, false, true, "passed"},
                 {false, false, false, false, false, false, false, false, "passed"},
-                {true, true, false, false, false, false, false, false, "stopped"},
+                {true, true, false, false, false, false, false, true, "stopped"},
+                {false, true, false, false, false, false, false, false, "stopped"},
                 {true, false, true, false, false, false, false, false, "failed"},
                 {true, false, false, true, false, false, false, true, "passed"},
                 {true, false, false, false, true, false, false, true, "passed"},
@@ -326,7 +327,9 @@ public class ProofTaskTest {
             if (shouldDelete) {
                 InOrder order = inOrder(task, worker, driver);
                 order.verify(worker).stopProducers(proof.getId());
-                order.verify(task).sendCompletionNotification(any());
+                if (!manual) {
+                    order.verify(task).sendCompletionNotification(any());
+                }
                 order.verify(worker).stopAndRemoveConsumers(proof.getId());
                 order.verify(driver).deleteTopic("cleanup-topic_transactional");
                 order.verify(driver).deleteTopic("cleanup-topic");

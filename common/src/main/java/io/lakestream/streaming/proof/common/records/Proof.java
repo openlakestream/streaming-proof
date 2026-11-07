@@ -171,7 +171,7 @@ public class Proof {
      */
     private Integer finalWaitSeconds;
 
-    /** Delete test topics after a naturally completed, passing run. Disabled by default. */
+    /** Delete test topics after a passing or manually stopped run. Disabled by default. */
     private boolean cleanupTopicsOnSuccess;
 
     /** Human-readable timestamp when the proof test started */
