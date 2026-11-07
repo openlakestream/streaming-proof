@@ -707,7 +707,7 @@ public class ProofTask {
         return DEFAULT_FINAL_WAIT_SECONDS;
     }
 
-    private void runFinalVerification() {
+    private boolean runFinalVerification() {
         int maxRetries = resolveFinalWaitSeconds();
         for (int attempt = 0; attempt <= maxRetries; attempt++) {
             try {
@@ -755,7 +755,7 @@ public class ProofTask {
                 }
                 if (fulfilled) {
                     log.info("[{}] Final verification succeeded on attempt {}", proof.getId(), attempt + 1);
-                    return;
+                    return true;
                 }
                 if (attempt < maxRetries) {
                     log.info("[{}] Final verification waiting for consumers to catch up (attempt {}/{})",
@@ -765,15 +765,16 @@ public class ProofTask {
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 log.warn("Final verification interrupted for proof {}", proof.getId());
-                return;
+                return false;
             } catch (Exception e) {
                 log.warn("Final checkpoint verification failed for proof {}", proof.getId(), e);
-                return;
+                return false;
             }
         }
         failed = true;
         log.warn("[{}] Final verification: consumers did not catch up within {} seconds",
                 proof.getId(), maxRetries);
+        return false;
     }
 
     Pair<ProducerCheckpoint, ConsumerCheckPoint> aggregateCheckpoints() {
@@ -1654,17 +1655,19 @@ public class ProofTask {
         // Stop producers first so no more messages are sent.  The producer
         // state remains on the worker until consumers are stopped, so the
         // subsequent checkpoint can still read the final published sequences.
-        clients.forEach(client -> {
+        boolean clientsStopped = true;
+        for (WorkerHttpClient client : clients) {
             try {
                 client.stopProducers(proof.getId()).join();
             } catch (Exception e) {
+                clientsStopped = false;
                 log.warn("Failed to stop producers for proof {}", proof.getId(), e);
             }
-        });
+        }
 
         // Run final verification after producers have stopped but while
         // consumers are still active, capturing every published message.
-        runFinalVerification();
+        boolean finalVerificationSucceeded = runFinalVerification();
 
         // Record a final time-series point so the chart reflects the
         // fully-verified state after all consumers have caught up.
@@ -1680,17 +1683,26 @@ public class ProofTask {
         // Notify after final verification, so the webhook carries the final result. Wait for it
         // before removing consumers, so reports during the wait still read their metrics, and
         // before closing the webhook client, which would abort it.
+        ProofReport finalReport = buildReport(true);
         if (completionHandled.get() && !manuallyStopped.get()) {
-            sendCompletionNotification(buildReport(true)).join();
+            sendCompletionNotification(finalReport).join();
         }
 
-        clients.forEach(client -> {
+        for (WorkerHttpClient client : clients) {
             try {
                 client.stopAndRemoveConsumers(proof.getId()).join();
             } catch (Exception e) {
+                clientsStopped = false;
                 log.warn("Failed to stop consumers for proof {}", proof.getId(), e);
             }
-        });
+        }
+
+        // Keep failed, interrupted, or still-connected runs intact for investigation.
+        if (proof.isCleanupTopicsOnSuccess() && completionHandled.get() && !manuallyStopped.get()
+                && finalVerificationSucceeded && clientsStopped && "passed".equals(finalReport.status())) {
+            deleteProofTopics();
+            closeTopicDrivers();
+        }
 
         if (webhookService != null) {
             webhookService.close();

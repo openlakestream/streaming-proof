@@ -35,6 +35,7 @@ import io.lakestream.streaming.proof.common.MessageMetadata;
 import io.lakestream.streaming.proof.common.ProofDriver;
 import io.lakestream.streaming.proof.common.WebhookConfig;
 import io.lakestream.streaming.proof.common.WebhookNotificationService;
+import io.lakestream.streaming.proof.common.WorkerHttpClient;
 import io.lakestream.streaming.proof.common.records.Configs;
 import io.lakestream.streaming.proof.common.records.ConsumerCheckPoint;
 import io.lakestream.streaming.proof.common.records.Driver;
@@ -46,6 +47,7 @@ import io.lakestream.streaming.proof.common.records.ProofClusterTarget;
 import io.lakestream.streaming.proof.common.records.ProofPerformanceSummary;
 import io.lakestream.streaming.proof.common.records.ProofReport;
 import io.lakestream.streaming.proof.common.records.ProofSummary;
+import io.lakestream.streaming.proof.common.records.ProofWorkerMetricsSnapshot;
 import io.lakestream.streaming.proof.common.records.PulsarProofConfig;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -244,6 +246,117 @@ public class ProofTaskTest {
             verify(driver, times(1)).deleteTopic("test-topic");
         } finally {
             task.getExecutor().shutdownNow();
+        }
+    }
+
+    @DataProvider
+    public Object[][] topicCleanupCases() {
+        return new Object[][] {
+                {true, false, false, false, false, false, false, true, "passed"},
+                {false, false, false, false, false, false, false, false, "passed"},
+                {true, true, false, false, false, false, false, false, "stopped"},
+                {true, false, true, false, false, false, false, false, "failed"},
+                {true, false, false, true, false, false, false, false, "passed"},
+                {true, false, false, false, true, false, false, false, "passed"},
+                {true, false, false, false, false, true, false, false, "passed"},
+                {true, false, false, false, false, false, true, true, "passed"}
+        };
+    }
+
+    @Test(dataProvider = "topicCleanupCases")
+    public void testTopicCleanupAfterCompletion(boolean enabled, boolean manual, boolean failed,
+            boolean consumerLags, boolean producerStopFails, boolean consumerStopFails, boolean deleteFails,
+            boolean shouldDelete, String expectedStatus) throws Exception {
+        ProofDriver driver = mock(ProofDriver.class);
+        ProofDriver geoDriver = mock(ProofDriver.class);
+        Proof proof = Proof.builder().id("cleanup-proof").topic("cleanup-topic")
+                .features(List.of("exactly_once")).cleanupTopicsOnSuccess(enabled)
+                .drivers(Drivers.builder().admin("primary").consumer("secondary").build())
+                .finalWaitSeconds(0).maxStallSeconds(10).build();
+        ProofTask task = spy(new ProofTask(proof, new Configs(Map.of(), Map.of()), driver,
+                name -> "secondary".equals(name) ? geoDriver : driver));
+        WorkerHttpClient worker = mock(WorkerHttpClient.class);
+        doReturn(producerStopFails ? CompletableFuture.failedFuture(new RuntimeException("stop producer"))
+                : CompletableFuture.completedFuture(null)).when(worker).stopProducers(proof.getId());
+        doReturn(consumerStopFails ? CompletableFuture.failedFuture(new RuntimeException("stop consumer"))
+                : CompletableFuture.completedFuture(null)).when(worker).stopAndRemoveConsumers(proof.getId());
+        doReturn(CompletableFuture.completedFuture(
+                new ProofWorkerMetricsSnapshot(10, 10, 80, 0, 10, 80, null, null)))
+                .when(worker).metrics(proof.getId());
+        doReturn(CompletableFuture.completedFuture(
+                new ProofWorkerMetricsSnapshot(10, 10, 80, 0, 10, 80, null, null)))
+                .when(worker).metricsWindowed(proof.getId());
+        task.getClients().add(worker);
+        if (deleteFails) {
+            doThrow(new RuntimeException("delete failed")).when(driver).deleteTopic("cleanup-topic_transactional");
+        }
+        try {
+            getRunningFlag(task).set(true);
+            setLongField(task, "lastVerifiedObserved", 10L);
+            setLongField(task, "lastVerifiedChangeMillis", System.currentTimeMillis() - (failed ? 20_000 : 0));
+            ProducerCheckpoint producerCp = new ProducerCheckpoint();
+            producerCp.addPublished("key", new LongSeq(9, MessageMetadata.empty()));
+            ConsumerCheckPoint consumerCp = new ConsumerCheckPoint();
+            ConsumerCheckPoint.SeqRange range = new ConsumerCheckPoint.SeqRange();
+            range.setStart(new LongSeq(0, MessageMetadata.empty()));
+            range.setEnd(new LongSeq(consumerLags ? 4 : 9, MessageMetadata.empty()));
+            consumerCp.addKey("key", Map.of("consumer", range));
+            doReturn(Pair.of(producerCp, consumerCp)).when(task).aggregateCheckpoints();
+
+            if (manual) {
+                task.requestStop();
+            } else {
+                Method complete = ProofTask.class.getDeclaredMethod("completeProofAfterDuration");
+                complete.setAccessible(true);
+                complete.invoke(task);
+            }
+
+            task.stop();
+
+            for (ProofDriver topicDriver : List.of(driver, geoDriver)) {
+                verify(topicDriver, times(shouldDelete ? 1 : 0)).deleteTopic("cleanup-topic");
+            }
+            verify(driver, times(shouldDelete ? 1 : 0)).deleteTopic("cleanup-topic_transactional");
+            verify(geoDriver, never()).deleteTopic("cleanup-topic_transactional");
+            if (shouldDelete) {
+                InOrder order = inOrder(task, worker, driver);
+                order.verify(worker).stopProducers(proof.getId());
+                order.verify(task).sendCompletionNotification(any());
+                order.verify(worker).stopAndRemoveConsumers(proof.getId());
+                order.verify(driver).deleteTopic("cleanup-topic_transactional");
+                order.verify(driver).deleteTopic("cleanup-topic");
+            }
+            assertFalse(task.isRunning());
+            assertEquals(task.getReport().status(), expectedStatus);
+            if (!consumerLags) {
+                assertEquals(task.getReport().summary().verified(), 10L);
+            }
+            assertEquals(task.getReport().proof(), proof);
+        } finally {
+            task.getExecutor().shutdownNow();
+            task.getPublishLatencyExecutor().shutdownNow();
+        }
+    }
+
+    @Test
+    public void testCheckpointReadFailurePreservesTopicsWithCleanupEnabled() throws Exception {
+        ProofDriver driver = mock(ProofDriver.class);
+        Proof proof = Proof.builder().id("cleanup-proof").topic("cleanup-topic")
+                .features(List.of("at_least_once")).cleanupTopicsOnSuccess(true).finalWaitSeconds(0).build();
+        ProofTask task = spy(new ProofTask(proof, new Configs(Map.of(), Map.of()), driver));
+        try {
+            getRunningFlag(task).set(true);
+            doThrow(new RuntimeException("checkpoint unavailable")).when(task).aggregateCheckpoints();
+            Method complete = ProofTask.class.getDeclaredMethod("completeProofAfterDuration");
+            complete.setAccessible(true);
+            complete.invoke(task);
+
+            verify(driver, never()).deleteTopic(any());
+            assertFalse(task.isRunning());
+            assertNotNull(task.getReport());
+        } finally {
+            task.getExecutor().shutdownNow();
+            task.getPublishLatencyExecutor().shutdownNow();
         }
     }
 
