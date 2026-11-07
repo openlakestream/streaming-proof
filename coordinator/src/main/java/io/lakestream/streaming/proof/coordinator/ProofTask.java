@@ -1680,8 +1680,9 @@ public class ProofTask {
         // Notify after final verification, so the webhook carries the final result. Wait for it
         // before removing consumers, so reports during the wait still read their metrics, and
         // before closing the webhook client, which would abort it.
+        ProofReport finalReport = buildReport(true);
         if (completionHandled.get() && !manuallyStopped.get()) {
-            sendCompletionNotification(buildReport(true)).join();
+            sendCompletionNotification(finalReport).join();
         }
 
         clients.forEach(client -> {
@@ -1691,6 +1692,16 @@ public class ProofTask {
                 log.warn("Failed to stop consumers for proof {}", proof.getId(), e);
             }
         });
+
+        try {
+            if (proof.isCleanupTopicsOnSuccess()
+                    && ("passed".equals(finalReport.status()) || "stopped".equals(finalReport.status()))) {
+                deleteProofTopics();
+            }
+        } finally {
+            // Reports do not need the task's private topic admin clients after stopping.
+            closeTopicDrivers();
+        }
 
         if (webhookService != null) {
             webhookService.close();
