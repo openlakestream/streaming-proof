@@ -19,6 +19,7 @@ import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockConstruction;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
@@ -49,11 +50,14 @@ import io.lakestream.streaming.proof.common.records.ProofReport;
 import io.lakestream.streaming.proof.common.records.ProofSummary;
 import io.lakestream.streaming.proof.common.records.ProofWorkerMetricsSnapshot;
 import io.lakestream.streaming.proof.common.records.PulsarProofConfig;
+import io.lakestream.streaming.proof.driver.kafka.KafkaProofDriver;
+import io.lakestream.streaming.proof.driver.pulsar.PulsarProofDriver;
 import io.lakestream.streaming.proof.worker.DriverCache;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -66,6 +70,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.apache.commons.lang3.tuple.Pair;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
+import org.mockito.MockedConstruction;
 import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 
@@ -353,6 +358,77 @@ public class ProofTaskTest {
         } finally {
             task.getExecutor().shutdownNow();
             task.getPublishLatencyExecutor().shutdownNow();
+        }
+    }
+
+    @DataProvider
+    public Object[][] geoCleanupConfigUpdates() {
+        return new Object[][] {{false, false}, {false, true}, {true, false}, {true, true}};
+    }
+
+    @Test(dataProvider = "geoCleanupConfigUpdates")
+    @SuppressWarnings("unchecked")
+    public void testGeoCleanupKeepsOriginalTargetAfterStop(boolean automaticCleanup, boolean mutateOriginal)
+            throws Exception {
+        Map<String, Object> originalSettings = new HashMap<>();
+        originalSettings.put("bootstrap.servers", "geo-a:9092");
+        originalSettings.put("options", new HashMap<>(Map.of("cluster", "geo-a")));
+        originalSettings.put("addresses", new ArrayList<>(List.of("geo-a:9092")));
+        Coordinator coordinator = new Coordinator();
+        coordinator.updateConfigs(new Configs(new HashMap<>(), new HashMap<>(Map.of(
+                "primary", new Driver("kafka", Map.of("bootstrap.servers", "primary:9092")),
+                "geo", new Driver("kafka", originalSettings)))));
+        Proof proof = Proof.builder().id("geo-cleanup-proof").topic("geo-cleanup-topic").features(List.of("at_least_once"))
+                .drivers(Drivers.builder().admin("primary").producer("primary").consumer("geo").build())
+                .cleanupTopicsOnSuccess(automaticCleanup).finalWaitSeconds(0)
+                .checkPointInterval(3600).duration(3600).build();
+        ProofDriver primaryDriver = mock(ProofDriver.class);
+        ProofTask task = null;
+        try (MockedConstruction<KafkaProofDriver> kafkaDrivers = mockConstruction(KafkaProofDriver.class);
+             MockedConstruction<PulsarProofDriver> pulsarDrivers = mockConstruction(PulsarProofDriver.class)) {
+            task = new ProofTask(proof, coordinator.getConfigs(), primaryDriver);
+            coordinator.getProofs().put(proof.getId(), task);
+            task.createProofTopics();
+            getRunningFlag(task).set(true);
+            assertEquals(kafkaDrivers.constructed().size(), 1);
+            KafkaProofDriver originalGeoDriver = kafkaDrivers.constructed().getFirst();
+            if (automaticCleanup) {
+                doThrow(new RuntimeException("temporary deletion failure"))
+                        .when(originalGeoDriver).deleteTopic(proof.getTopic());
+                Method complete = ProofTask.class.getDeclaredMethod("completeProofAfterDuration");
+                complete.setAccessible(true);
+                complete.invoke(task);
+            } else {
+                coordinator.stopProof(proof.getId());
+            }
+            verify(originalGeoDriver).close();
+
+            if (mutateOriginal) {
+                originalSettings.put("bootstrap.servers", "geo-b:9092");
+                ((Map<String, Object>) originalSettings.get("options")).put("cluster", "geo-b");
+                ((List<String>) originalSettings.get("addresses")).set(0, "geo-b:9092");
+            }
+            coordinator.updateConfigs(new Configs(Map.of(), Map.of(
+                    "geo", new Driver("pulsar", Map.of("pulsar.admin.url", "http://geo-b:8080")))));
+            coordinator.removeProof(proof.getId());
+
+            assertTrue(pulsarDrivers.constructed().isEmpty(), "Cleanup must retain the original driver type");
+            assertEquals(kafkaDrivers.constructed().size(), 2);
+            KafkaProofDriver cleanupDriver = kafkaDrivers.constructed().get(1);
+            ArgumentCaptor<Map<String, Object>> settings = ArgumentCaptor.forClass(Map.class);
+            verify(cleanupDriver).init(settings.capture());
+            assertEquals(settings.getValue().get("bootstrap.servers"), "geo-a:9092");
+            assertEquals(((Map<?, ?>) settings.getValue().get("options")).get("cluster"), "geo-a");
+            assertEquals(settings.getValue().get("addresses"), List.of("geo-a:9092"));
+            verify(cleanupDriver).deleteTopic(proof.getTopic());
+            verify(cleanupDriver).close();
+            verify(primaryDriver, never()).close();
+            assertFalse(coordinator.getProofs().containsKey(proof.getId()));
+        } finally {
+            if (task != null) {
+                task.getExecutor().shutdownNow();
+                task.getPublishLatencyExecutor().shutdownNow();
+            }
         }
     }
 

@@ -116,6 +116,9 @@ public class ProofTask {
     /** Driver name used for admin operations in the primary proof task. */
     private final String adminDriverName;
 
+    /** Original connection settings used to recreate private cleanup clients. */
+    private final Map<String, Driver> topicDriverConfigs;
+
     /** Lazily initialized topic admin drivers for non-primary geo roles. */
     private final DriverCache topicDriverCache;
 
@@ -222,6 +225,7 @@ public class ProofTask {
         this.clients = new ArrayList<>(configs.workers().size());
         this.proofDriver = driver;
         this.adminDriverName = resolveAdminDriverName(proof);
+        this.topicDriverConfigs = snapshotTopicDriverConfigs();
         this.topicDriverCache = new DriverCache();
         this.topicDriverResolver = topicDriverResolver;
         this.webhookService = new WebhookNotificationService();
@@ -369,12 +373,27 @@ public class ProofTask {
             return proofDriver;
         }
 
-        Driver driverConfig = configs.drivers().get(driverName);
+        Driver driverConfig = topicDriverConfigs.get(driverName);
         if (driverConfig == null) {
             throw new IllegalArgumentException("Driver " + driverName + " not found. "
-                    + "Available drivers: " + configs.drivers().keySet());
+                    + "Available drivers: " + topicDriverConfigs.keySet());
         }
         return topicDriverCache.getDriver(driverName, driverConfig);
+    }
+
+    private Map<String, Driver> snapshotTopicDriverConfigs() {
+        Map<String, Driver> snapshots = new HashMap<>();
+        for (String driverName : resolveOutputTopicDriverNames()) {
+            if (driverName == null || driverName.equals(adminDriverName)) {
+                continue;
+            }
+            Driver driver = configs.drivers().get(driverName);
+            if (driver != null) {
+                Map<String, Object> settings = deepCopyMap(driver.driverConfigs());
+                snapshots.put(driverName, new Driver(driver.driverType(), settings == null ? Map.of() : settings));
+            }
+        }
+        return Map.copyOf(snapshots);
     }
 
     private List<String> resolveOutputTopicDriverNames() {
